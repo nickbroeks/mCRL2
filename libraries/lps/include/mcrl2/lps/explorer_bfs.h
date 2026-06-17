@@ -58,6 +58,7 @@ namespace mcrl2::lps
       long long work_time{0};
       long long report_time{0};
       long long insert_time{0};
+      long long discover_index_time{0};
 
       if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
       {
@@ -79,7 +80,11 @@ namespace mcrl2::lps
           while (!thread_todo->empty() && !m_must_abort.load(std::memory_order_relaxed))
           { 
             thread_todo->choose_element(current_state);
+            auto discover_index_start = std::chrono::steady_clock::now();
             std::size_t s_index = discovered.index(current_state,thread_index);
+            auto discover_index_end = std::chrono::steady_clock::now();
+            discover_index_time += std::chrono::duration_cast<std::chrono::nanoseconds>(discover_index_end - discover_index_start).count();
+
             start_state(thread_index, current_state, s_index);
             data::add_assignments(thread_sigma, m_process_parameters, current_state);
             for (const explorer_summand& summand: regular_summands)
@@ -228,7 +233,7 @@ namespace mcrl2::lps
         number_of_idle_processes--;
       } 
       mCRL2log(log::debug) << "Stop thread " << thread_index << ".\n";
-      mCRL2log(log::verbose) << work_time << "(report:" << report_time << ", insert:" << insert_time << ")" << "\n";
+      mCRL2log(log::verbose) << work_time << "(discover_index_time:" << discover_index_time << ", report:" << report_time << "(insert:" << insert_time << "))" << "\n";
       if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
       {
         m_exclusive_state_access.unlock();
