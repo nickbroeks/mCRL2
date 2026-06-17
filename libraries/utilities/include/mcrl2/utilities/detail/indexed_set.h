@@ -61,7 +61,7 @@ inline void INDEXED_SET::reserve_indices(const std::size_t thread_index)
 
     while ((detail::max_load_factor * m_hashtable.size()) < m_keys.size())
     {
-       resize_hashtable();
+       resize_hashtable(thread_index);
     }
   }
 }
@@ -70,8 +70,83 @@ INDEXED_SET_TEMPLATE
 inline typename INDEXED_SET::size_type INDEXED_SET::put_in_hashtable(
                   const key_type& key, 
                   std::size_t value, 
-                  std::size_t& new_position)
+                  std::size_t& new_position,
+                  const std::size_t thread_index)
 {
+  assert(thread_index < m_put_statistics.size());
+
+  put_in_hashtable_statistics& statistics =
+      m_put_statistics[thread_index];
+
+  // Calling steady_clock for every invocation would substantially perturb
+  // this hot function. Time one invocation out of every 1024.
+  constexpr std::uint64_t sample_period = 1024;
+  static_assert(
+    (sample_period & (sample_period - 1)) == 0,
+    "sample_period must be a power of two"
+  );
+
+  const std::uint64_t call_number = statistics.calls++;
+  const bool sampled =
+      (call_number & (sample_period - 1)) == 0;
+
+  std::chrono::steady_clock::time_point start_time;
+
+  if (sampled)
+  {
+    start_time = std::chrono::steady_clock::now();
+  }
+
+  std::uint64_t iterations = 0;
+  std::uint64_t occupied_probes = 0;
+  std::uint64_t reserved_spins = 0;
+  std::uint64_t cas_failures = 0;
+  std::uint64_t key_comparisons = 0;
+
+  std::uint64_t reserved_streak = 0;
+  std::uint64_t maximum_reserved_streak = 0;
+
+  auto finish = [&](const size_type result) -> size_type
+  {
+    statistics.loop_iterations += iterations;
+    statistics.occupied_probes += occupied_probes;
+    statistics.reserved_spins += reserved_spins;
+    statistics.cas_failures += cas_failures;
+    statistics.key_comparisons += key_comparisons;
+
+    if (reserved_spins != 0)
+    {
+      ++statistics.calls_with_reserved;
+    }
+
+    statistics.max_iterations =
+        std::max(statistics.max_iterations, iterations);
+
+    statistics.max_reserved_streak =
+        std::max(
+          statistics.max_reserved_streak,
+          maximum_reserved_streak
+        );
+
+    if (sampled)
+    {
+      const auto elapsed =
+          std::chrono::steady_clock::now() - start_time;
+
+      const auto nanoseconds =
+          std::chrono::duration_cast<std::chrono::nanoseconds>(
+            elapsed
+          ).count();
+
+      statistics.sampled_nanoseconds +=
+          static_cast<std::uint64_t>(nanoseconds);
+
+      ++statistics.sampled_calls;
+    }
+
+    return result;
+  };
+
   // Find a place to insert key and find whether key already exists.
   assert(m_hashtable.size() > 0);
 
@@ -81,6 +156,8 @@ inline typename INDEXED_SET::size_type INDEXED_SET::put_in_hashtable(
 
   while (true)
   {
+    ++iterations;
+
     std::size_t index = m_hashtable[new_position];
     assert(index == detail::EMPTY || index == detail::RESERVED || index < m_keys.size());
 
@@ -90,8 +167,10 @@ inline typename INDEXED_SET::size_type INDEXED_SET::put_in_hashtable(
       std::size_t pos=detail::EMPTY;
       if (reinterpret_cast<std::atomic<std::size_t>*>(&m_hashtable[new_position])->compare_exchange_strong(pos,value))
       {
-        return value;
+        return finish(value);
       }
+      // Another worker changed this slot before the CAS completed.
+      ++cas_failures;
       index=pos;             // Insertion failed, but another process put an alternative value "pos"
                              // at this position. 
     }
@@ -100,16 +179,30 @@ inline typename INDEXED_SET::size_type INDEXED_SET::put_in_hashtable(
     // will shortly change the RESERVED value into a sensible index. 
     if (index != detail::RESERVED) 
     {
+      reserved_streak = 0;
       assert(index!=detail::EMPTY);
+      assert(index < m_keys.size());
+
+      ++occupied_probes;
+      ++key_comparisons;
       if (m_equals(m_keys[index], key))
       {
         // key is already in the set, return position of key.
         assert(index<m_next_index && m_next_index<=m_keys.size());
-        return index;
+        return finish(index);
       }
       assert(m_hashtable.size()>0);
       new_position = (new_position + detail::STEP) % m_hashtable.size();
       assert(new_position != start); // In this case the hashtable is full, which should never happen.
+    } else {
+      ++reserved_spins;
+      ++reserved_streak;
+
+      maximum_reserved_streak =
+          std::max(
+            maximum_reserved_streak,
+            reserved_streak
+          );
     }
   }
 
@@ -119,8 +212,9 @@ inline typename INDEXED_SET::size_type INDEXED_SET::put_in_hashtable(
 }
 
 INDEXED_SET_TEMPLATE
-inline void INDEXED_SET::resize_hashtable()
+inline void INDEXED_SET::resize_hashtable(const std::size_t thread_index)
 {
+  assert(thread_index < m_put_statistics.size());
   m_hashtable.assign(m_hashtable.size() * 2, detail::EMPTY);
   size_t index = 0;
   for (const Key& k: m_keys)
@@ -128,7 +222,7 @@ inline void INDEXED_SET::resize_hashtable()
     if (index<m_next_index)
     {
       std::size_t new_position;  // The resulting new_position is not used here. 
-      put_in_hashtable(k, index, new_position);
+      put_in_hashtable(k, index, new_position, thread_index);
     }
     else 
     {
@@ -171,6 +265,16 @@ inline INDEXED_SET::indexed_set(
     // Copy the mutex n times for all the other threads.
     m_shared_mutexes.emplace_back(m_shared_mutexes[0]);
   }
+
+  // Use the same indexing convention as m_shared_mutexes.
+  //
+  // Single-threaded:
+  //     size == 1; valid index is 0
+  //
+  // Multithreaded with N workers:
+  //     size == N + 1; valid worker indices are 1..N
+  //     entry 0 remains unused
+  m_put_statistics.resize(m_shared_mutexes.size());
 }
 
 INDEXED_SET_TEMPLATE
@@ -256,6 +360,9 @@ inline void INDEXED_SET::clear(const std::size_t thread_index)
 INDEXED_SET_TEMPLATE
 inline std::pair<typename INDEXED_SET::size_type, bool> INDEXED_SET::insert(const Key& key, const std::size_t thread_index)
 {
+  assert(thread_index < m_shared_mutexes.size());
+  assert(thread_index < m_put_statistics.size());
+
   shared_guard guard = m_shared_mutexes[thread_index].lock_shared();
   assert(m_next_index <= m_keys.size());
   if (m_next_index + m_shared_mutexes.size() >= m_keys.size())
@@ -265,7 +372,7 @@ inline std::pair<typename INDEXED_SET::size_type, bool> INDEXED_SET::insert(cons
     guard.lock_shared();
   }
   std::size_t new_position;
-  const std::size_t index = put_in_hashtable(key, detail::RESERVED, new_position);
+  const std::size_t index = put_in_hashtable(key, detail::RESERVED, new_position, thread_index);
   
   if (index != detail::RESERVED) // Key already exists.
   {
@@ -286,6 +393,151 @@ inline std::pair<typename INDEXED_SET::size_type, bool> INDEXED_SET::insert(cons
   return std::make_pair(new_index, true);
 }
 
+INDEXED_SET_TEMPLATE
+inline void INDEXED_SET::reset_put_in_hashtable_statistics()
+{
+  // This function is deliberately not synchronized. It must only be called
+  // before worker threads start or after they have all joined.
+  for (put_in_hashtable_statistics& statistics:
+       m_put_statistics)
+  {
+    statistics = put_in_hashtable_statistics{};
+  }
+}
+INDEXED_SET_TEMPLATE
+inline void INDEXED_SET::print_put_in_hashtable_statistics() const
+{
+  put_in_hashtable_statistics total{};
+
+  for (std::size_t thread_index = 0;
+       thread_index < m_put_statistics.size();
+       ++thread_index)
+  {
+    const put_in_hashtable_statistics& statistics =
+        m_put_statistics[thread_index];
+
+    if (statistics.calls == 0)
+    {
+      continue;
+    }
+
+    const double average_iterations =
+        static_cast<double>(statistics.loop_iterations) /
+        static_cast<double>(statistics.calls);
+
+    const double average_reserved_spins =
+        static_cast<double>(statistics.reserved_spins) /
+        static_cast<double>(statistics.calls);
+
+    const double reserved_call_percentage =
+        100.0 *
+        static_cast<double>(statistics.calls_with_reserved) /
+        static_cast<double>(statistics.calls);
+
+    double average_sampled_nanoseconds = 0.0;
+    double estimated_total_seconds = 0.0;
+
+    if (statistics.sampled_calls != 0)
+    {
+      average_sampled_nanoseconds =
+          static_cast<double>(statistics.sampled_nanoseconds) /
+          static_cast<double>(statistics.sampled_calls);
+
+      estimated_total_seconds =
+          average_sampled_nanoseconds *
+          static_cast<double>(statistics.calls) /
+          1.0e9;
+    }
+
+    mCRL2log(log::verbose)
+      << "put_in_hashtable"
+      << " thread=" << thread_index
+      << " calls=" << statistics.calls
+      << " sampled_calls=" << statistics.sampled_calls
+      << " estimated_seconds=" << estimated_total_seconds
+      << " avg_sampled_ns=" << average_sampled_nanoseconds
+      << " avg_iterations=" << average_iterations
+      << " avg_reserved_spins=" << average_reserved_spins
+      << " reserved_calls_percent=" << reserved_call_percentage
+      << " occupied_probes=" << statistics.occupied_probes
+      << " key_comparisons=" << statistics.key_comparisons
+      << " cas_failures=" << statistics.cas_failures
+      << " max_iterations=" << statistics.max_iterations
+      << " max_reserved_streak="
+      << statistics.max_reserved_streak
+      << '\n';
+
+    total.calls += statistics.calls;
+    total.loop_iterations += statistics.loop_iterations;
+    total.occupied_probes += statistics.occupied_probes;
+    total.reserved_spins += statistics.reserved_spins;
+    total.cas_failures += statistics.cas_failures;
+    total.key_comparisons += statistics.key_comparisons;
+    total.calls_with_reserved += statistics.calls_with_reserved;
+    total.sampled_calls += statistics.sampled_calls;
+    total.sampled_nanoseconds += statistics.sampled_nanoseconds;
+
+    total.max_iterations =
+        std::max(
+          total.max_iterations,
+          statistics.max_iterations
+        );
+
+    total.max_reserved_streak =
+        std::max(
+          total.max_reserved_streak,
+          statistics.max_reserved_streak
+        );
+  }
+
+  if (total.calls == 0)
+  {
+    mCRL2log(log::verbose) << "put_in_hashtable total calls=0\n";
+    return;
+  }
+
+  const double average_iterations =
+      static_cast<double>(total.loop_iterations) /
+      static_cast<double>(total.calls);
+
+  const double average_reserved_spins =
+      static_cast<double>(total.reserved_spins) /
+      static_cast<double>(total.calls);
+
+  const double reserved_call_percentage =
+      100.0 *
+      static_cast<double>(total.calls_with_reserved) /
+      static_cast<double>(total.calls);
+
+  double estimated_total_seconds = 0.0;
+
+  if (total.sampled_calls != 0)
+  {
+    const double average_sampled_nanoseconds =
+        static_cast<double>(total.sampled_nanoseconds) /
+        static_cast<double>(total.sampled_calls);
+
+    estimated_total_seconds =
+        average_sampled_nanoseconds *
+        static_cast<double>(total.calls) /
+        1.0e9;
+  }
+
+  mCRL2log(log::verbose)
+    << "put_in_hashtable total"
+    << " calls=" << total.calls
+    << " sampled_calls=" << total.sampled_calls
+    << " estimated_seconds=" << estimated_total_seconds
+    << " avg_iterations=" << average_iterations
+    << " avg_reserved_spins=" << average_reserved_spins
+    << " reserved_calls_percent=" << reserved_call_percentage
+    << " occupied_probes=" << total.occupied_probes
+    << " key_comparisons=" << total.key_comparisons
+    << " cas_failures=" << total.cas_failures
+    << " max_iterations=" << total.max_iterations
+    << " max_reserved_streak=" << total.max_reserved_streak
+    << '\n';
+}
 #undef INDEXED_SET_TEMPLATE 
 #undef INDEXED_SET 
 

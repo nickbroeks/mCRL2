@@ -321,6 +321,7 @@ namespace mcrl2::lps
         {
           threads[i-1].join();
         }
+        discovered.print_put_in_hashtable_statistics();
       }
       else
       {

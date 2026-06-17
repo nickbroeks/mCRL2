@@ -37,6 +37,31 @@ private:
   mutable std::shared_ptr<std::mutex> m_mutex;
   mutable std::vector<shared_mutex> m_shared_mutexes;
 
+  /// Diagnostic statistics for put_in_hashtable.
+  ///
+  /// Each worker writes exclusively to the entry corresponding to its
+  /// thread_index. The entries therefore do not need atomic members.
+  struct alignas(64) put_in_hashtable_statistics
+  {
+    std::uint64_t calls = 0;
+
+    std::uint64_t loop_iterations = 0;
+    std::uint64_t occupied_probes = 0;
+    std::uint64_t reserved_spins = 0;
+    std::uint64_t cas_failures = 0;
+    std::uint64_t key_comparisons = 0;
+
+    std::uint64_t calls_with_reserved = 0;
+    std::uint64_t max_iterations = 0;
+    std::uint64_t max_reserved_streak = 0;
+
+    std::uint64_t sampled_calls = 0;
+    std::uint64_t sampled_nanoseconds = 0;
+  };
+
+  /// One statistics record per valid thread index.
+  std::vector<put_in_hashtable_statistics> m_put_statistics;
+
   /// m_next_index indicates the next index that 
   //  has not yet been used. This allows to increase m_keys in 
   //  large steps, avoiding exclusive access too often.  
@@ -52,10 +77,10 @@ private:
   void reserve_indices(std::size_t thread_index);
 
   /// \brief Inserts the given (key, n) pair into the indexed set.
-  std::size_t put_in_hashtable(const Key& key, std::size_t value, std::size_t& new_position);
+  std::size_t put_in_hashtable(const Key& key, std::size_t value, std::size_t& new_position, const std::size_t thread_index);
 
   /// \brief Resizes the hash table to twice its current size.
-  inline void resize_hashtable();
+  inline void resize_hashtable(const std::size_t thread_index);
 
 public:
   using key_type = Key;
@@ -232,6 +257,17 @@ public:
     size_type result=m_next_index;
     return result;
   }
+  /// Reset profiling statistics.
+  ///
+  /// This may only be called when no other thread is accessing this
+  /// indexed_set.
+  void reset_put_in_hashtable_statistics();
+
+  /// Print profiling statistics.
+  ///
+  /// This may only be called when no other thread is updating the
+  /// statistics, normally after all worker threads have joined.
+  void print_put_in_hashtable_statistics() const;
 };
 
 } // end namespace utilities
