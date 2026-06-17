@@ -79,8 +79,8 @@ inline typename INDEXED_SET::size_type INDEXED_SET::put_in_hashtable(
       m_put_statistics[thread_index];
 
   // Calling steady_clock for every invocation would substantially perturb
-  // this hot function. Time one invocation out of every 128.
-  constexpr std::uint64_t sample_period = 128;
+  // this hot function. Time one invocation out of every 1024.
+  constexpr std::uint64_t sample_period = 1024;
   static_assert(
     (sample_period & (sample_period - 1)) == 0,
     "sample_period must be a power of two"
