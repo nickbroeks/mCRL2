@@ -326,7 +326,6 @@ namespace mcrl2::lps
         {
           threads[i-1].join();
         }
-        discovered.print_put_in_hashtable_statistics();
       }
       else
       {
@@ -342,6 +341,7 @@ namespace mcrl2::lps
                                    examine_transition, start_state, finish_state, 
                                    m_global_rewr, m_global_sigma);  
       }
+      discovered.print_put_in_hashtable_statistics();
 
       m_must_abort = false;
     }
