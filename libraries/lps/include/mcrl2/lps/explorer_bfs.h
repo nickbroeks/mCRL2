@@ -57,6 +57,7 @@ namespace mcrl2::lps
       atermpp::aterm key;
       long long work_time{0};
       long long report_time{0};
+      long long insert_time{0};
 
       if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
       {
@@ -74,16 +75,15 @@ namespace mcrl2::lps
           {
             m_exclusive_state_access.unlock();
           }
-
+          auto work_start = std::chrono::steady_clock::now();
           while (!thread_todo->empty() && !m_must_abort.load(std::memory_order_relaxed))
           { 
             thread_todo->choose_element(current_state);
             std::size_t s_index = discovered.index(current_state,thread_index);
             start_state(thread_index, current_state, s_index);
             data::add_assignments(thread_sigma, m_process_parameters, current_state);
-            auto work_start = std::chrono::steady_clock::now();
             for (const explorer_summand& summand: regular_summands)
-            {   
+            {
               generate_transitions(
                 summand,
                 confluent_summands,
@@ -142,7 +142,10 @@ namespace mcrl2::lps
                     }
                     else
                     { 
+                      auto insert_start = std::chrono::steady_clock::now();
                       std::pair<std::size_t,bool> p = discovered.insert(s1, thread_index);
+                      auto insert_end = std::chrono::steady_clock::now();
+                      insert_time += std::chrono::duration_cast<std::chrono::nanoseconds>(insert_end - insert_start).count();
                       s1_index=p.first;
                       if (p.second)  // Index is newly added. 
                       {
@@ -153,13 +156,11 @@ namespace mcrl2::lps
 
                     examine_transition(thread_index, m_options.number_of_threads, current_state, s_index, a, s1, s1_index, summand.index);
                     auto report_end = std::chrono::steady_clock::now();
-                    report_time += std::chrono::duration_cast<std::chrono::microseconds>(report_end - report_start).count();
+                    report_time += std::chrono::duration_cast<std::chrono::nanoseconds>(report_end - report_start).count();
                   }
                 }
               );
             }
-            auto work_end = std::chrono::steady_clock::now();
-            work_time += std::chrono::duration_cast<std::chrono::microseconds>(work_end - work_start).count();
 
             if (number_of_idle_processes>0 && thread_todo->size()>1)
             {
@@ -187,6 +188,8 @@ namespace mcrl2::lps
             finish_state(thread_index, m_options.number_of_threads, current_state, s_index, thread_todo->size());
             thread_todo->finish_state();
           }
+          auto work_end = std::chrono::steady_clock::now();
+          work_time += std::chrono::duration_cast<std::chrono::nanoseconds>(work_end - work_start).count();
         }
         else
         {
@@ -225,7 +228,7 @@ namespace mcrl2::lps
         number_of_idle_processes--;
       } 
       mCRL2log(log::debug) << "Stop thread " << thread_index << ".\n";
-      mCRL2log(log::verbose) << work_time << ", " << report_time << "\n";
+      mCRL2log(log::verbose) << work_time << "(report:" << report_time << ", insert:" << insert_time << ")" << "\n";
       if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
       {
         m_exclusive_state_access.unlock();
