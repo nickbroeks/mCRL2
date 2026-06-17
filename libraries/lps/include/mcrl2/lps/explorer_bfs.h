@@ -55,6 +55,7 @@ namespace mcrl2::lps
       std::vector<state> dummy;
       std::unique_ptr<todo_set> thread_todo=make_todo_set(dummy.begin(),dummy.end()); // The new states for each process are temporarily stored in this vector for each thread. 
       atermpp::aterm key;
+      long long work_time{0};
 
       if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
       {
@@ -79,6 +80,7 @@ namespace mcrl2::lps
             std::size_t s_index = discovered.index(current_state,thread_index);
             start_state(thread_index, current_state, s_index);
             data::add_assignments(thread_sigma, m_process_parameters, current_state);
+            auto work_start = std::chrono::steady_clock::now();
             for (const explorer_summand& summand: regular_summands)
             {   
               generate_transitions(
@@ -151,6 +153,8 @@ namespace mcrl2::lps
                   }
                 }
               );
+              auto work_end = std::chrono::steady_clock::now();
+              work_time += std::chrono::duration_cast<std::chrono::microseconds>(work_end - work_start).count();
             }
 
             if (number_of_idle_processes>0 && thread_todo->size()>1)
@@ -217,6 +221,7 @@ namespace mcrl2::lps
         number_of_idle_processes--;
       } 
       mCRL2log(log::debug) << "Stop thread " << thread_index << ".\n";
+      mCRL2log(log::verbose) << work_time << ", ";
       if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
       {
         m_exclusive_state_access.unlock();
