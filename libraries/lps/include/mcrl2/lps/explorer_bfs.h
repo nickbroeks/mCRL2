@@ -58,6 +58,8 @@ namespace mcrl2::lps
       long long work_time{0};
       long long report_time{0};
       long long insert_time{0};
+      long long share_time{0};
+      long long finish_time{0};
       long long discover_index_time{0};
 
       if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
@@ -76,9 +78,9 @@ namespace mcrl2::lps
           {
             m_exclusive_state_access.unlock();
           }
-          auto work_start = std::chrono::steady_clock::now();
           while (!thread_todo->empty() && !m_must_abort.load(std::memory_order_relaxed))
-          { 
+          {
+            auto work_start = std::chrono::steady_clock::now();
             thread_todo->choose_element(current_state);
             auto discover_index_start = std::chrono::steady_clock::now();
             std::size_t s_index = discovered.index(current_state,thread_index);
@@ -166,7 +168,9 @@ namespace mcrl2::lps
                 }
               );
             }
-
+            auto work_end = std::chrono::steady_clock::now();
+            work_time += std::chrono::duration_cast<std::chrono::nanoseconds>(work_end - work_start).count();
+            
             if (number_of_idle_processes>0 && thread_todo->size()>1)
             {
               if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
@@ -189,12 +193,15 @@ namespace mcrl2::lps
                 m_exclusive_state_access.unlock();
               }
             }
+            auto share_end = std::chrono::steady_clock::now();
+            share_time += std::chrono::duration_cast<std::chrono::nanoseconds>(share_end - work_end).count();
 
             finish_state(thread_index, m_options.number_of_threads, current_state, s_index, thread_todo->size());
             thread_todo->finish_state();
+
+            auto finish_end = std::chrono::steady_clock::now();
+            finish_time += std::chrono::duration_cast<std::chrono::nanoseconds>(finish_end - share_end).count();
           }
-          auto work_end = std::chrono::steady_clock::now();
-          work_time += std::chrono::duration_cast<std::chrono::nanoseconds>(work_end - work_start).count();
         }
         else
         {
@@ -233,7 +240,8 @@ namespace mcrl2::lps
         number_of_idle_processes--;
       } 
       mCRL2log(log::debug) << "Stop thread " << thread_index << ".\n";
-      mCRL2log(log::verbose) << work_time << "(discover_index_time:" << discover_index_time << ", report:" << report_time << "(insert:" << insert_time << "))" << "\n";
+      mCRL2log(log::verbose) << work_time << "(discover_index_time:" << discover_index_time << ", report:" << report_time << "(insert:" << insert_time
+        << ")), share_time" << share_time << ", finish_time:" << finish_time << "\n";
       if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
       {
         m_exclusive_state_access.unlock();
