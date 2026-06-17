@@ -153,9 +153,9 @@ namespace mcrl2::lps
                   }
                 }
               );
-              auto work_end = std::chrono::steady_clock::now();
-              work_time += std::chrono::duration_cast<std::chrono::microseconds>(work_end - work_start).count();
             }
+            auto work_end = std::chrono::steady_clock::now();
+            work_time += std::chrono::duration_cast<std::chrono::microseconds>(work_end - work_start).count();
 
             if (number_of_idle_processes>0 && thread_todo->size()>1)
             {
