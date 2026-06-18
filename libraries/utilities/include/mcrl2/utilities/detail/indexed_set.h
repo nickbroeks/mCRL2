@@ -420,28 +420,28 @@ inline void INDEXED_SET::print_put_in_hashtable_statistics() const
         static_cast<double>(statistics.calls_with_reserved) /
         static_cast<double>(statistics.calls);
 
-    double estimate_lock_seconds = 0.0;
-    double estimate_reserve_seconds = 0.0;
-    double estimate_hashtable_seconds = 0.0;
-    double estimate_finalize_seconds = 0.0;
+    double lock_seconds = 0.0;
+    double reserve_seconds = 0.0;
+    double hashtable_seconds = 0.0;
+    double finalize_seconds = 0.0;
 
-    estimate_lock_seconds =
+    lock_seconds =
         static_cast<double>(statistics.lock_nanoseconds) / 1.0e9 ;
-    estimate_reserve_seconds =
+    reserve_seconds =
         static_cast<double>(statistics.reserve_nanoseconds) / 1.0e9;
-    estimate_hashtable_seconds =
+    hashtable_seconds =
         static_cast<double>(statistics.hashtable_nanoseconds) / 1.0e9;
-    estimate_finalize_seconds =
+    finalize_seconds =
         static_cast<double>(statistics.finalize_nanoseconds) / 1.0e9;
 
     mCRL2log(log::verbose)
       << "put_in_hashtable"
       << " thread=" << thread_index
       << " calls=" << statistics.calls
-      << " estimate_lock_seconds=" << estimate_lock_seconds
-      << " estimate_reserve_seconds=" << estimate_reserve_seconds
-      << " estimate_hashtable_seconds=" << estimate_hashtable_seconds
-      << " estimate_finalize_seconds=" << estimate_finalize_seconds
+      << " lock_seconds=" << lock_seconds
+      << " reserve_seconds=" << reserve_seconds
+      << " hashtable_seconds=" << hashtable_seconds
+      << " finalize_seconds=" << finalize_seconds
       << " avg_iterations=" << average_iterations
       << " avg_reserved_spins=" << average_reserved_spins
       << " reserved_calls_percent=" << reserved_call_percentage
@@ -497,19 +497,19 @@ inline void INDEXED_SET::print_put_in_hashtable_statistics() const
       static_cast<double>(total.calls_with_reserved) /
       static_cast<double>(total.calls);
 
-  double estimate_lock_seconds = 0.0;
-  double estimate_reserve_seconds = 0.0;
-  double estimate_hashtable_seconds = 0.0;
-  double estimate_finalize_seconds = 0.0;
+  double lock_seconds = 0.0;
+  double reserve_seconds = 0.0;
+  double hashtable_seconds = 0.0;
+  double finalize_seconds = 0.0;
 
 
-    estimate_lock_seconds =
+    lock_seconds =
         static_cast<double>(total.lock_nanoseconds) / 1.0e9;
-    estimate_reserve_seconds =
+    reserve_seconds =
         static_cast<double>(total.reserve_nanoseconds) / 1.0e9;
-    estimate_hashtable_seconds =
+    hashtable_seconds =
         static_cast<double>(total.hashtable_nanoseconds) / 1.0e9;
-    estimate_finalize_seconds =
+    finalize_seconds =
         static_cast<double>(total.finalize_nanoseconds) / 1.0e9;
 
 
