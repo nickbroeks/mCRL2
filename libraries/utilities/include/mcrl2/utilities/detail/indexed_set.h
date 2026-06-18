@@ -52,7 +52,6 @@ static_assert(minimal_hashtable_size>=8);       ///< With a max_load of 0.75 the
 INDEXED_SET_TEMPLATE
 inline void INDEXED_SET::reserve_indices(const std::size_t thread_index)
 {
-  std::chrono::steady_clock::time_point timer_start = std::chrono::steady_clock::now();
   lock_guard guard = m_shared_mutexes[thread_index].lock();
 
   if (m_next_index + m_shared_mutexes.size() >= m_keys.size())   // otherwise another process already reserved entries, and nothing needs to be done. 
@@ -65,8 +64,6 @@ inline void INDEXED_SET::reserve_indices(const std::size_t thread_index)
        resize_hashtable(thread_index);
     }
   }
-  std::chrono::steady_clock::time_point timer_end = std::chrono::steady_clock::now();
-  mCRL2log(log::verbose) << "lock: " << std::chrono::duration_cast<std::chrono::nanoseconds>(timer_end - timer_start).count() / 1000000 << "\n";
 }
 
 INDEXED_SET_TEMPLATE
