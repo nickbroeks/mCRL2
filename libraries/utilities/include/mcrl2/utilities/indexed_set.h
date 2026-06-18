@@ -60,6 +60,7 @@ private:
     std::uint64_t reserve_nanoseconds = 0;
     std::uint64_t hashtable_nanoseconds = 0;
     std::uint64_t early_exit_nanoseconds = 0;
+    std::uint64_t unlock_nanoseconds = 0;
     std::uint64_t finalize_nanoseconds = 0;
   };
 

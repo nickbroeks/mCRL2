@@ -329,6 +329,7 @@ inline std::pair<typename INDEXED_SET::size_type, bool> INDEXED_SET::insert(cons
   std::chrono::steady_clock::time_point lock_end;
   std::chrono::steady_clock::time_point reserve_end;
   std::chrono::steady_clock::time_point hashtable_end;
+  std::chrono::steady_clock::time_point finalize_end;
   std::chrono::steady_clock::time_point func_end;
 
   assert(thread_index < m_shared_mutexes.size());
@@ -363,8 +364,12 @@ inline std::pair<typename INDEXED_SET::size_type, bool> INDEXED_SET::insert(cons
   if (index != detail::RESERVED) // Key already exists.
   {
     assert(index < m_next_index && m_next_index <= m_keys.size());
+
+    finalize_end = std::chrono::steady_clock::now();
+    statistics.early_exit_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(finalize_end - hashtable_end).count());
+    guard.unlock_shared();
     func_end = std::chrono::steady_clock::now();
-    statistics.early_exit_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(func_end - hashtable_end).count());
+    statistics.unlock_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(func_end - finalize_end).count());
     statistics.function_inner_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(func_end - func_start).count());
     return std::make_pair(index, false);
   }
@@ -380,8 +385,11 @@ inline std::pair<typename INDEXED_SET::size_type, bool> INDEXED_SET::insert(cons
 
   assert(new_index < m_next_index && m_next_index <= m_keys.size());
   
+  finalize_end = std::chrono::steady_clock::now();
+  statistics.finalize_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(finalize_end - hashtable_end).count());
+  guard.unlock_shared();
   func_end = std::chrono::steady_clock::now();
-  statistics.finalize_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(func_end - hashtable_end).count());
+  statistics.unlock_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(func_end - finalize_end).count());
   statistics.function_inner_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(func_end - func_start).count());
   return std::make_pair(new_index, true);
 }
@@ -433,6 +441,7 @@ inline void INDEXED_SET::print_put_in_hashtable_statistics() const
     double hashtable_seconds = 0.0;
     double early_exit_seconds = 0.0;
     double finalize_seconds = 0.0;
+    double unlock_seconds = 0.0;
 
     function_inner_seconds =
         static_cast<double>(statistics.function_inner_nanoseconds) / 1.0e9 ;
@@ -446,6 +455,8 @@ inline void INDEXED_SET::print_put_in_hashtable_statistics() const
         static_cast<double>(statistics.early_exit_nanoseconds) / 1.0e9;
     finalize_seconds =
         static_cast<double>(statistics.finalize_nanoseconds) / 1.0e9;
+    unlock_seconds =
+        static_cast<double>(statistics.unlock_nanoseconds) / 1.0e9;
 
     mCRL2log(log::verbose)
       << "put_in_hashtable"
@@ -457,6 +468,7 @@ inline void INDEXED_SET::print_put_in_hashtable_statistics() const
       << " hashtable_seconds=" << hashtable_seconds
       << " early_exit_seconds=" << early_exit_seconds
       << " finalize_seconds=" << finalize_seconds
+      << " unlock_seconds=" << unlock_seconds
       << " avg_iterations=" << average_iterations
       << " avg_reserved_spins=" << average_reserved_spins
       << " reserved_calls_percent=" << reserved_call_percentage
@@ -481,6 +493,7 @@ inline void INDEXED_SET::print_put_in_hashtable_statistics() const
     total.hashtable_nanoseconds += statistics.hashtable_nanoseconds;
     total.early_exit_nanoseconds += statistics.early_exit_nanoseconds;
     total.finalize_nanoseconds += statistics.finalize_nanoseconds;
+    total.unlock_nanoseconds += statistics.unlock_nanoseconds;
 
     total.max_iterations =
         std::max(
@@ -520,6 +533,7 @@ inline void INDEXED_SET::print_put_in_hashtable_statistics() const
   double hashtable_seconds = 0.0;
   double early_exit_seconds = 0.0;
   double finalize_seconds = 0.0;
+  double unlock_seconds = 0.0;
 
     function_inner_seconds =
         static_cast<double>(total.function_inner_nanoseconds) / 1.0e9 ;
@@ -533,6 +547,8 @@ inline void INDEXED_SET::print_put_in_hashtable_statistics() const
         static_cast<double>(total.early_exit_nanoseconds) / 1.0e9;
     finalize_seconds =
         static_cast<double>(total.finalize_nanoseconds) / 1.0e9;
+    unlock_seconds =
+        static_cast<double>(total.unlock_nanoseconds) / 1.0e9;
 
 
   mCRL2log(log::verbose)
@@ -544,6 +560,7 @@ inline void INDEXED_SET::print_put_in_hashtable_statistics() const
     << " hashtable_seconds=" << hashtable_seconds
     << " early_exit_seconds=" << early_exit_seconds
     << " finalize_seconds=" << finalize_seconds
+    << " unlock_seconds=" << unlock_seconds
     << " avg_iterations=" << average_iterations
     << " avg_reserved_spins=" << average_reserved_spins
     << " reserved_calls_percent=" << reserved_call_percentage
