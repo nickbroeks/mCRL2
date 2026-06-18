@@ -22,7 +22,7 @@ constexpr static bool EnableGarbageCollection = true;
 constexpr static bool EnableBlockAllocator = true;
 
 /// \brief Enable to print garbage collection statistics.
-constexpr static bool EnableGarbageCollectionMetrics = false;
+constexpr static bool EnableGarbageCollectionMetrics = true;
 
 /// Performs garbage collection intensively for testing purposes.
 constexpr static bool EnableAggressiveGarbageCollection = false;
