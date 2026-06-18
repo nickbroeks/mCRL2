@@ -56,7 +56,10 @@ private:
     std::uint64_t max_reserved_streak = 0;
 
     std::uint64_t sampled_calls = 0;
-    std::uint64_t sampled_nanoseconds = 0;
+    std::uint64_t sampled_lock_nanoseconds = 0;
+    std::uint64_t sampled_reserve_nanoseconds = 0;
+    std::uint64_t sampled_hashtable_nanoseconds = 0;
+    std::uint64_t sampled_finalize_nanoseconds = 0;
   };
 
   /// One statistics record per valid thread index.

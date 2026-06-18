@@ -52,6 +52,7 @@ static_assert(minimal_hashtable_size>=8);       ///< With a max_load of 0.75 the
 INDEXED_SET_TEMPLATE
 inline void INDEXED_SET::reserve_indices(const std::size_t thread_index)
 {
+  std::chrono::steady_clock::time_point timer_start = std::chrono::steady_clock::now();
   lock_guard guard = m_shared_mutexes[thread_index].lock();
 
   if (m_next_index + m_shared_mutexes.size() >= m_keys.size())   // otherwise another process already reserved entries, and nothing needs to be done. 
@@ -64,6 +65,8 @@ inline void INDEXED_SET::reserve_indices(const std::size_t thread_index)
        resize_hashtable(thread_index);
     }
   }
+  std::chrono::steady_clock::time_point timer_end = std::chrono::steady_clock::now();
+  mCRL2log(log::verbose) << "lock: " << std::chrono::duration_cast<std::chrono::nanoseconds>(timer_end - timer_start).count() / 1000000 << "\n";
 }
 
 INDEXED_SET_TEMPLATE
@@ -77,25 +80,6 @@ inline typename INDEXED_SET::size_type INDEXED_SET::put_in_hashtable(
 
   put_in_hashtable_statistics& statistics =
       m_put_statistics[thread_index];
-
-  // Calling steady_clock for every invocation would substantially perturb
-  // this hot function. Time one invocation out of every 1024.
-  constexpr std::uint64_t sample_period = 1024;
-  static_assert(
-    (sample_period & (sample_period - 1)) == 0,
-    "sample_period must be a power of two"
-  );
-
-  const std::uint64_t call_number = statistics.calls++;
-  const bool sampled =
-      (call_number & (sample_period - 1)) == 0;
-
-  std::chrono::steady_clock::time_point start_time;
-
-  if (sampled)
-  {
-    start_time = std::chrono::steady_clock::now();
-  }
 
   std::uint64_t iterations = 0;
   std::uint64_t occupied_probes = 0;
@@ -127,23 +111,6 @@ inline typename INDEXED_SET::size_type INDEXED_SET::put_in_hashtable(
           statistics.max_reserved_streak,
           maximum_reserved_streak
         );
-
-    if (sampled)
-    {
-      const auto elapsed =
-          std::chrono::steady_clock::now() - start_time;
-
-      const auto nanoseconds =
-          std::chrono::duration_cast<std::chrono::nanoseconds>(
-            elapsed
-          ).count();
-
-      statistics.sampled_nanoseconds +=
-          static_cast<std::uint64_t>(nanoseconds);
-
-      ++statistics.sampled_calls;
-    }
-
     return result;
   };
 
@@ -362,8 +329,30 @@ inline std::pair<typename INDEXED_SET::size_type, bool> INDEXED_SET::insert(cons
 {
   assert(thread_index < m_shared_mutexes.size());
   assert(thread_index < m_put_statistics.size());
+  put_in_hashtable_statistics& statistics =
+      m_put_statistics[thread_index];
+  // Calling steady_clock for every invocation would substantially perturb
+  // this hot function. Time one invocation out of every 1024.
+  constexpr std::uint64_t sample_period = 32;
+  static_assert(
+    (sample_period & (sample_period - 1)) == 0,
+    "sample_period must be a power of two"
+  );
+  const std::uint64_t call_number = statistics.calls++;
 
+  const bool sampled =
+      (call_number & (sample_period - 1)) == 0;
+
+  std::chrono::steady_clock::time_point lock_start;
+  std::chrono::steady_clock::time_point lock_end;
+  std::chrono::steady_clock::time_point reserve_end;
+  std::chrono::steady_clock::time_point hashtable_end;
+  std::chrono::steady_clock::time_point finalize_end;
+
+  if (sampled) { lock_start = std::chrono::steady_clock::now(); }
   shared_guard guard = m_shared_mutexes[thread_index].lock_shared();
+  if (sampled) { lock_end = std::chrono::steady_clock::now(); }
+
   assert(m_next_index <= m_keys.size());
   if (m_next_index + m_shared_mutexes.size() >= m_keys.size())
   {
@@ -371,8 +360,16 @@ inline std::pair<typename INDEXED_SET::size_type, bool> INDEXED_SET::insert(cons
     reserve_indices(thread_index);
     guard.lock_shared();
   }
+  if (sampled) { reserve_end = std::chrono::steady_clock::now(); }
   std::size_t new_position;
   const std::size_t index = put_in_hashtable(key, detail::RESERVED, new_position, thread_index);
+  if (sampled) {
+    hashtable_end = std::chrono::steady_clock::now();
+    statistics.sampled_lock_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(lock_end - lock_start).count());
+    statistics.sampled_reserve_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(reserve_end - lock_end).count());
+    statistics.sampled_hashtable_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(hashtable_end - reserve_end).count());
+    ++statistics.sampled_calls;
+  }
   
   if (index != detail::RESERVED) // Key already exists.
   {
@@ -390,6 +387,11 @@ inline std::pair<typename INDEXED_SET::size_type, bool> INDEXED_SET::insert(cons
 
 
   assert(new_index < m_next_index && m_next_index <= m_keys.size());
+    if (sampled) {
+    finalize_end = std::chrono::steady_clock::now();
+    statistics.sampled_finalize_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(finalize_end - hashtable_end).count());
+
+  }
   return std::make_pair(new_index, true);
 }
 
@@ -434,19 +436,22 @@ inline void INDEXED_SET::print_put_in_hashtable_statistics() const
         static_cast<double>(statistics.calls_with_reserved) /
         static_cast<double>(statistics.calls);
 
-    double average_sampled_nanoseconds = 0.0;
-    double estimated_total_seconds = 0.0;
+    double estimate_lock_seconds = 0.0;
+    double estimate_reserve_seconds = 0.0;
+    double estimate_hashtable_seconds = 0.0;
+    double estimate_finalize_seconds = 0.0;
 
     if (statistics.sampled_calls != 0)
     {
-      average_sampled_nanoseconds =
-          static_cast<double>(statistics.sampled_nanoseconds) /
-          static_cast<double>(statistics.sampled_calls);
-
-      estimated_total_seconds =
-          average_sampled_nanoseconds *
-          static_cast<double>(statistics.calls) /
-          1.0e9;
+      double f = static_cast<double>(total.calls) / static_cast<double>(total.sampled_calls);
+      estimate_lock_seconds =
+          static_cast<double>(statistics.sampled_lock_nanoseconds) / 1.0e9 * f ;
+      estimate_reserve_seconds =
+          static_cast<double>(statistics.sampled_reserve_nanoseconds) / 1.0e9 * f;
+      estimate_hashtable_seconds =
+          static_cast<double>(statistics.sampled_hashtable_nanoseconds) / 1.0e9 * f;
+      estimate_finalize_seconds =
+          static_cast<double>(statistics.sampled_finalize_nanoseconds) / 1.0e9 * f;
     }
 
     mCRL2log(log::verbose)
@@ -454,8 +459,10 @@ inline void INDEXED_SET::print_put_in_hashtable_statistics() const
       << " thread=" << thread_index
       << " calls=" << statistics.calls
       << " sampled_calls=" << statistics.sampled_calls
-      << " estimated_seconds=" << estimated_total_seconds
-      << " avg_sampled_ns=" << average_sampled_nanoseconds
+      << " estimate_lock_seconds=" << estimate_lock_seconds
+      << " estimate_reserve_seconds=" << estimate_reserve_seconds
+      << " estimate_hashtable_seconds=" << estimate_hashtable_seconds
+      << " estimate_finalize_seconds=" << estimate_finalize_seconds
       << " avg_iterations=" << average_iterations
       << " avg_reserved_spins=" << average_reserved_spins
       << " reserved_calls_percent=" << reserved_call_percentage
@@ -475,7 +482,10 @@ inline void INDEXED_SET::print_put_in_hashtable_statistics() const
     total.key_comparisons += statistics.key_comparisons;
     total.calls_with_reserved += statistics.calls_with_reserved;
     total.sampled_calls += statistics.sampled_calls;
-    total.sampled_nanoseconds += statistics.sampled_nanoseconds;
+    total.sampled_lock_nanoseconds += statistics.sampled_lock_nanoseconds;
+    total.sampled_reserve_nanoseconds += statistics.sampled_reserve_nanoseconds;
+    total.sampled_hashtable_nanoseconds += statistics.sampled_hashtable_nanoseconds;
+    total.sampled_finalize_nanoseconds += statistics.sampled_finalize_nanoseconds;
 
     total.max_iterations =
         std::max(
@@ -509,25 +519,32 @@ inline void INDEXED_SET::print_put_in_hashtable_statistics() const
       static_cast<double>(total.calls_with_reserved) /
       static_cast<double>(total.calls);
 
-  double estimated_total_seconds = 0.0;
+  double estimate_lock_seconds = 0.0;
+  double estimate_reserve_seconds = 0.0;
+  double estimate_hashtable_seconds = 0.0;
+  double estimate_finalize_seconds = 0.0;
 
   if (total.sampled_calls != 0)
   {
-    const double average_sampled_nanoseconds =
-        static_cast<double>(total.sampled_nanoseconds) /
-        static_cast<double>(total.sampled_calls);
-
-    estimated_total_seconds =
-        average_sampled_nanoseconds *
-        static_cast<double>(total.calls) /
-        1.0e9;
+    double f = static_cast<double>(total.calls) / static_cast<double>(total.sampled_calls);
+      estimate_lock_seconds =
+          static_cast<double>(total.sampled_lock_nanoseconds) / 1.0e9 * f;
+      estimate_reserve_seconds =
+          static_cast<double>(total.sampled_reserve_nanoseconds) / 1.0e9 * f;
+      estimate_hashtable_seconds =
+          static_cast<double>(total.sampled_hashtable_nanoseconds) / 1.0e9 * f;
+      estimate_finalize_seconds =
+          static_cast<double>(total.sampled_finalize_nanoseconds) / 1.0e9 * f;
   }
 
   mCRL2log(log::verbose)
     << "put_in_hashtable total"
     << " calls=" << total.calls
     << " sampled_calls=" << total.sampled_calls
-    << " estimated_seconds=" << estimated_total_seconds
+    << " estimate_lock_seconds=" << estimate_lock_seconds
+    << " estimate_reserve_seconds=" << estimate_reserve_seconds
+    << " estimate_hashtable_seconds=" << estimate_hashtable_seconds
+    << " estimate_finalize_seconds=" << estimate_finalize_seconds
     << " avg_iterations=" << average_iterations
     << " avg_reserved_spins=" << average_reserved_spins
     << " reserved_calls_percent=" << reserved_call_percentage
