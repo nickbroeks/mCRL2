@@ -355,7 +355,7 @@ inline std::pair<typename INDEXED_SET::size_type, bool> INDEXED_SET::insert(cons
   const std::size_t index = put_in_hashtable(key, detail::RESERVED, new_position, thread_index);
   
   hashtable_end = std::chrono::steady_clock::now();
-  
+
   statistics.lock_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(lock_end - lock_start).count());
   statistics.reserve_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(reserve_end - lock_end).count());
   statistics.hashtable_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(hashtable_end - reserve_end).count());
@@ -427,17 +427,23 @@ inline void INDEXED_SET::print_put_in_hashtable_statistics() const
         static_cast<double>(statistics.calls_with_reserved) /
         static_cast<double>(statistics.calls);
 
+    double function_inner_seconds = 0.0;
     double lock_seconds = 0.0;
     double reserve_seconds = 0.0;
     double hashtable_seconds = 0.0;
+    double early_exit_seconds = 0.0;
     double finalize_seconds = 0.0;
 
+    function_inner_seconds =
+        static_cast<double>(statistics.function_inner_nanoseconds) / 1.0e9 ;
     lock_seconds =
         static_cast<double>(statistics.lock_nanoseconds) / 1.0e9 ;
     reserve_seconds =
         static_cast<double>(statistics.reserve_nanoseconds) / 1.0e9;
     hashtable_seconds =
         static_cast<double>(statistics.hashtable_nanoseconds) / 1.0e9;
+    early_exit_seconds =
+        static_cast<double>(statistics.early_exit_nanoseconds) / 1.0e9;
     finalize_seconds =
         static_cast<double>(statistics.finalize_nanoseconds) / 1.0e9;
 
@@ -445,9 +451,11 @@ inline void INDEXED_SET::print_put_in_hashtable_statistics() const
       << "put_in_hashtable"
       << " thread=" << thread_index
       << " calls=" << statistics.calls
+      << " function_inner_seconds=" << function_inner_seconds
       << " lock_seconds=" << lock_seconds
       << " reserve_seconds=" << reserve_seconds
       << " hashtable_seconds=" << hashtable_seconds
+      << " early_exit_seconds=" << early_exit_seconds
       << " finalize_seconds=" << finalize_seconds
       << " avg_iterations=" << average_iterations
       << " avg_reserved_spins=" << average_reserved_spins
@@ -467,9 +475,11 @@ inline void INDEXED_SET::print_put_in_hashtable_statistics() const
     total.cas_failures += statistics.cas_failures;
     total.key_comparisons += statistics.key_comparisons;
     total.calls_with_reserved += statistics.calls_with_reserved;
+    total.function_inner_nanoseconds += statistics.function_inner_nanoseconds;
     total.lock_nanoseconds += statistics.lock_nanoseconds;
     total.reserve_nanoseconds += statistics.reserve_nanoseconds;
     total.hashtable_nanoseconds += statistics.hashtable_nanoseconds;
+    total.early_exit_nanoseconds += statistics.early_exit_nanoseconds;
     total.finalize_nanoseconds += statistics.finalize_nanoseconds;
 
     total.max_iterations =
@@ -504,18 +514,23 @@ inline void INDEXED_SET::print_put_in_hashtable_statistics() const
       static_cast<double>(total.calls_with_reserved) /
       static_cast<double>(total.calls);
 
+  double function_inner_seconds = 0.0;
   double lock_seconds = 0.0;
   double reserve_seconds = 0.0;
   double hashtable_seconds = 0.0;
+  double early_exit_seconds = 0.0;
   double finalize_seconds = 0.0;
 
-
+    function_inner_seconds =
+        static_cast<double>(total.function_inner_nanoseconds) / 1.0e9 ;
     lock_seconds =
         static_cast<double>(total.lock_nanoseconds) / 1.0e9;
     reserve_seconds =
         static_cast<double>(total.reserve_nanoseconds) / 1.0e9;
     hashtable_seconds =
         static_cast<double>(total.hashtable_nanoseconds) / 1.0e9;
+    early_exit_seconds =
+        static_cast<double>(total.early_exit_nanoseconds) / 1.0e9;
     finalize_seconds =
         static_cast<double>(total.finalize_nanoseconds) / 1.0e9;
 
@@ -523,9 +538,11 @@ inline void INDEXED_SET::print_put_in_hashtable_statistics() const
   mCRL2log(log::verbose)
     << "put_in_hashtable total"
     << " calls=" << total.calls
+    << " function_inner_seconds=" << function_inner_seconds
     << " lock_seconds=" << lock_seconds
     << " reserve_seconds=" << reserve_seconds
     << " hashtable_seconds=" << hashtable_seconds
+    << " early_exit_seconds=" << early_exit_seconds
     << " finalize_seconds=" << finalize_seconds
     << " avg_iterations=" << average_iterations
     << " avg_reserved_spins=" << average_reserved_spins
