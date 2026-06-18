@@ -324,18 +324,20 @@ inline void INDEXED_SET::clear(const std::size_t thread_index)
 INDEXED_SET_TEMPLATE
 inline std::pair<typename INDEXED_SET::size_type, bool> INDEXED_SET::insert(const Key& key, const std::size_t thread_index)
 {
-  assert(thread_index < m_shared_mutexes.size());
-  assert(thread_index < m_put_statistics.size());
-  put_in_hashtable_statistics& statistics =
-      m_put_statistics[thread_index];
-
-  statistics.calls++;
-
+  std::chrono::steady_clock::time_point func_start = std::chrono::steady_clock::now();
   std::chrono::steady_clock::time_point lock_start;
   std::chrono::steady_clock::time_point lock_end;
   std::chrono::steady_clock::time_point reserve_end;
   std::chrono::steady_clock::time_point hashtable_end;
-  std::chrono::steady_clock::time_point finalize_end;
+  std::chrono::steady_clock::time_point func_end;
+
+  assert(thread_index < m_shared_mutexes.size());
+  assert(thread_index < m_put_statistics.size());
+
+  put_in_hashtable_statistics& statistics =
+      m_put_statistics[thread_index];
+
+  statistics.calls++;
 
   lock_start = std::chrono::steady_clock::now();
   shared_guard guard = m_shared_mutexes[thread_index].lock_shared();
@@ -353,14 +355,17 @@ inline std::pair<typename INDEXED_SET::size_type, bool> INDEXED_SET::insert(cons
   const std::size_t index = put_in_hashtable(key, detail::RESERVED, new_position, thread_index);
   
   hashtable_end = std::chrono::steady_clock::now();
+  
   statistics.lock_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(lock_end - lock_start).count());
   statistics.reserve_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(reserve_end - lock_end).count());
   statistics.hashtable_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(hashtable_end - reserve_end).count());
-
   
   if (index != detail::RESERVED) // Key already exists.
   {
     assert(index < m_next_index && m_next_index <= m_keys.size());
+    func_end = std::chrono::steady_clock::now();
+    statistics.early_exit_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(func_end - hashtable_end).count());
+    statistics.function_inner_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(func_end - func_start).count());
     return std::make_pair(index, false);
   }
 
@@ -374,8 +379,10 @@ inline std::pair<typename INDEXED_SET::size_type, bool> INDEXED_SET::insert(cons
 
 
   assert(new_index < m_next_index && m_next_index <= m_keys.size());
-  finalize_end = std::chrono::steady_clock::now();
-  statistics.finalize_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(finalize_end - hashtable_end).count());
+  
+  func_end = std::chrono::steady_clock::now();
+  statistics.finalize_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(func_end - hashtable_end).count());
+  statistics.function_inner_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(func_end - func_start).count());
   return std::make_pair(new_index, true);
 }
 

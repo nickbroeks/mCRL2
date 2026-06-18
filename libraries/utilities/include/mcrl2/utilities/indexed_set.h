@@ -55,9 +55,11 @@ private:
     std::uint64_t max_iterations = 0;
     std::uint64_t max_reserved_streak = 0;
 
+    std::uint64_t function_inner_nanoseconds = 0;
     std::uint64_t lock_nanoseconds = 0;
     std::uint64_t reserve_nanoseconds = 0;
     std::uint64_t hashtable_nanoseconds = 0;
+    std::uint64_t early_exit_nanoseconds = 0;
     std::uint64_t finalize_nanoseconds = 0;
   };
 
