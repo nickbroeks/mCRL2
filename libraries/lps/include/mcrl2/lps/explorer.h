@@ -686,6 +686,7 @@ private:
       std::size_t thread_index,
       std::atomic<std::size_t>& number_of_active_processes,
       std::atomic<std::size_t>& number_of_idle_processes,
+      std::atomic<std::size_t>& global_todo_count,
       const SummandSequence& regular_summands,
       const SummandSequence& confluent_summands,
       indexed_set_for_states_type& discovered,
