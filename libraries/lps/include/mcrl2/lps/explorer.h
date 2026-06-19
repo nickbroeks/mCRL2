@@ -38,6 +38,13 @@
 
 namespace mcrl2::lps {
 
+struct alignas(64) exp_stats {
+  std::uint64_t calls = 0;
+  std::uint64_t lock_nanoseconds = 0;
+  std::uint64_t unlock_nanoseconds = 0;
+  std::uint64_t work_nanoseconds = 0;
+};
+
 template <bool Stochastic, bool Timed, typename Specification>
 class explorer: public abortable
 {
@@ -80,6 +87,7 @@ class explorer: public abortable
     bool m_recursive = false;
     std::vector<explorer_summand> m_regular_summands;
     std::vector<explorer_summand> m_confluent_summands;
+    std::vector<exp_stats> m_exp_stats;
 
     volatile std::atomic<bool> m_must_abort = false;
 

@@ -47,6 +47,9 @@ private:
 
     std::uint64_t lock_nanoseconds = 0;
     std::uint64_t reserve_nanoseconds = 0;
+    std::uint64_t reserve_lock_nanoseconds = 0;
+    std::uint64_t reserve_work_nanoseconds = 0;
+    std::uint64_t reserve_unlock_nanoseconds = 0;
     std::uint64_t hashtable_nanoseconds = 0;
     std::uint64_t unlock_nanoseconds = 0;
   };

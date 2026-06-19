@@ -18,13 +18,6 @@
 
 namespace mcrl2::lps
 {
-    struct alignas(64) exp_stats {
-      std::uint64_t calls = 0;
-      std::uint64_t lock_nanoseconds = 0;
-      std::uint64_t unlock_nanoseconds = 0;
-      std::uint64_t work_nanoseconds = 0;
-    };
-    std::vector<exp_stats> m_exp_stats;
     template <bool Stochastic, bool Timed, typename Specification>
     template <
       typename StateType,
