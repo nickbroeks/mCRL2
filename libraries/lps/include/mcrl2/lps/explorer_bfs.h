@@ -70,6 +70,8 @@ namespace mcrl2::lps
         
         if (!todo->empty())
         {
+          number_of_active_processes++;
+          number_of_idle_processes--;
           idle_end = std::chrono::steady_clock::now();
           if (e_stats.is_first) {
             e_stats.is_first = false;
@@ -245,11 +247,6 @@ namespace mcrl2::lps
             m_exclusive_state_access.lock();
           }
         }
-        if (number_of_active_processes>0 || !todo->empty())
-        {
-          number_of_active_processes++;
-        }
-        number_of_idle_processes--;
       } 
       mCRL2log(log::debug) << "Stop thread " << thread_index << ".\n";
       if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
