@@ -39,13 +39,11 @@
 namespace mcrl2::lps {
 
 struct alignas(64) exp_stats {
-  std::uint64_t gt_calls = 0;
-  std::uint64_t gt_rewrite_nanoseconds = 0;
-  std::uint64_t gt_enumerate_nanoseconds = 0;
   std::uint64_t share_calls = 0;
   std::uint64_t share_lock_nanoseconds = 0;
   std::uint64_t share_unlock_nanoseconds = 0;
   std::uint64_t share_work_nanoseconds = 0;
+  std::uint64_t idle_nanoseconds = 0;
 };
 
 template <bool Stochastic, bool Timed, typename Specification>
@@ -274,9 +272,7 @@ class explorer: public abortable
       }
       if (summand.cache_strategy == caching::none)
       {
-        std::chrono::steady_clock::time_point start_rewrite = std::chrono::steady_clock::now();
         rewr(condition, summand.condition, sigma);
-        std::chrono::steady_clock::time_point start_check = std::chrono::steady_clock::now();
         if (!data::is_false(condition))
         {
           if (summand.variables.size()==0)
@@ -315,7 +311,6 @@ class explorer: public abortable
           }
           else // There are variables to be enumerated.
           {
-            std::chrono::steady_clock::time_point start_enumerate = std::chrono::steady_clock::now();
             enumerator.enumerate<enumerator_element>(
                         summand.variables, 
                         condition,
@@ -363,12 +358,8 @@ class explorer: public abortable
                         },
                         data::is_false
             );
-            std::chrono::steady_clock::time_point end_enumerate = std::chrono::steady_clock::now();
-            m_exp_stats[0].gt_enumerate_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_enumerate - start_enumerate).count());
           }
         }
-        m_exp_stats[0].gt_calls += 1;
-        m_exp_stats[0].gt_rewrite_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(start_check - start_rewrite).count());
       }
       else
       {

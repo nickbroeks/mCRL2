@@ -57,6 +57,9 @@ namespace mcrl2::lps
       std::unique_ptr<todo_set> thread_todo=make_todo_set(dummy.begin(),dummy.end()); // The new states for each process are temporarily stored in this vector for each thread. 
       atermpp::aterm key;
       exp_stats& e_stats = m_exp_stats[thread_index];
+      std::chrono::steady_clock::time_point idle_start = std::chrono::steady_clock::now();
+      std::chrono::steady_clock::time_point idle_end;
+      
       if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
       {
         m_exclusive_state_access.lock();
@@ -67,6 +70,8 @@ namespace mcrl2::lps
         
         if (!todo->empty())
         {
+          idle_end = std::chrono::steady_clock::now();
+          e_stats.idle_nanoseconds += std::chrono::duration_cast<std::chrono::nanoseconds>(idle_end - idle_start).count();
           todo->choose_element(current_state);
           thread_todo->insert(current_state);
           global_todo_count.fetch_sub(1, std::memory_order_release);
@@ -193,6 +198,7 @@ namespace mcrl2::lps
             finish_state(thread_index, m_options.number_of_threads, current_state, s_index, thread_todo->size());
             thread_todo->finish_state();
           }
+          idle_start = std::chrono::steady_clock::now();
         }
         else
         {
@@ -349,27 +355,11 @@ namespace mcrl2::lps
       {
         const exp_stats& statistics =
             m_exp_stats[thread_index];
-
-        gt_total.gt_calls += statistics.gt_calls;
-        gt_total.gt_rewrite_nanoseconds += statistics.gt_rewrite_nanoseconds;
-        gt_total.gt_enumerate_nanoseconds += statistics.gt_enumerate_nanoseconds;
         share_total.share_calls += statistics.share_calls;
         share_total.share_lock_nanoseconds += statistics.share_lock_nanoseconds;
         share_total.share_work_nanoseconds += statistics.share_work_nanoseconds;
         share_total.share_unlock_nanoseconds += statistics.share_unlock_nanoseconds;
-      }
-
-      if (gt_total.gt_calls > 0)
-      {
-        double gt_rewrite_seconds = static_cast<double>(gt_total.gt_rewrite_nanoseconds) / 1.0e9;
-        double gt_enumerate_seconds = static_cast<double>(gt_total.gt_enumerate_nanoseconds) / 1.0e9;
-
-        mCRL2log(log::verbose)
-          << "Generate_transitions total"
-          << " calls=" << gt_total.gt_calls
-          << " rewrite_seconds=" << gt_rewrite_seconds
-          << " enumerate_seconds=" << gt_enumerate_seconds
-          << '\n';
+        share_total.idle_nanoseconds += statistics.idle_nanoseconds;
       }
 
       if (share_total.share_calls == 0)
@@ -381,6 +371,7 @@ namespace mcrl2::lps
         double share_lock_seconds = static_cast<double>(share_total.share_lock_nanoseconds) / 1.0e9;
         double share_work_seconds = static_cast<double>(share_total.share_work_nanoseconds) / 1.0e9;
         double share_unlock_seconds = static_cast<double>(share_total.share_unlock_nanoseconds) / 1.0e9;
+        double idle_seconds = static_cast<double>(share_total.idle_nanoseconds) / 1.0e9;
 
         mCRL2log(log::verbose)
           << "Share total"
@@ -388,6 +379,7 @@ namespace mcrl2::lps
           << " lock_seconds=" << share_lock_seconds
           << " work_seconds=" << share_work_seconds
           << " unlock_seconds=" << share_unlock_seconds
+          << " idle_seconds=" << idle_seconds
           << '\n';
       }
       discovered.print_stats();
