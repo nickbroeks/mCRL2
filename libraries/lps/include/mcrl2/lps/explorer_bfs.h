@@ -315,8 +315,8 @@ namespace mcrl2::lps
         discover_state(initialisation_thread_index, s0, s0_index);
       }
 
-      std::atomic<std::size_t> number_of_active_processes=number_of_threads;
-      std::atomic<std::size_t> number_of_idle_processes=0;
+      std::atomic<std::size_t> number_of_active_processes=0;
+      std::atomic<std::size_t> number_of_idle_processes=number_of_threads;
       std::atomic<std::size_t> global_todo_count=todo->size();
 
       if (number_of_threads>1)
