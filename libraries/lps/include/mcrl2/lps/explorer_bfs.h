@@ -183,10 +183,10 @@ namespace mcrl2::lps
               }
 
               auto share_unlocked = std::chrono::steady_clock::now();
-              e_stats.calls += 1;
-              e_stats.lock_nanoseconds += std::chrono::duration_cast<std::chrono::nanoseconds>(share_locked - share_start).count();
-              e_stats.work_nanoseconds += std::chrono::duration_cast<std::chrono::nanoseconds>(share_done - share_locked).count();
-              e_stats.unlock_nanoseconds += std::chrono::duration_cast<std::chrono::nanoseconds>(share_unlocked - share_done).count();
+              e_stats.share_calls += 1;
+              e_stats.share_lock_nanoseconds += std::chrono::duration_cast<std::chrono::nanoseconds>(share_locked - share_start).count();
+              e_stats.share_work_nanoseconds += std::chrono::duration_cast<std::chrono::nanoseconds>(share_done - share_locked).count();
+              e_stats.share_unlock_nanoseconds += std::chrono::duration_cast<std::chrono::nanoseconds>(share_unlocked - share_done).count();
               global_todo_count.fetch_add(added_count, std::memory_order_release);
             }
 
@@ -340,7 +340,8 @@ namespace mcrl2::lps
                                    examine_transition, start_state, finish_state, 
                                    m_global_rewr, m_global_sigma);  
       }
-      exp_stats total{};
+      exp_stats gt_total{};
+      exp_stats share_total{};
 
       for (std::size_t thread_index = 0;
           thread_index < m_exp_stats.size();
@@ -349,29 +350,46 @@ namespace mcrl2::lps
         const exp_stats& statistics =
             m_exp_stats[thread_index];
 
-        total.calls += statistics.calls;
-        total.lock_nanoseconds += statistics.lock_nanoseconds;
-        total.work_nanoseconds += statistics.work_nanoseconds;
-        total.unlock_nanoseconds += statistics.unlock_nanoseconds;
+        gt_total.gt_calls += statistics.gt_calls;
+        gt_total.gt_rewrite_nanoseconds += statistics.gt_rewrite_nanoseconds;
+        gt_total.gt_enumerate_nanoseconds += statistics.gt_enumerate_nanoseconds;
+        share_total.share_calls += statistics.share_calls;
+        share_total.share_lock_nanoseconds += statistics.share_lock_nanoseconds;
+        share_total.share_work_nanoseconds += statistics.share_work_nanoseconds;
+        share_total.share_unlock_nanoseconds += statistics.share_unlock_nanoseconds;
       }
 
-      if (total.calls == 0)
+      if (gt_total.gt_calls > 0)
       {
-        mCRL2log(log::verbose) << "put_in_hashtable total calls=0\n";
-        return;
+        double gt_rewrite_seconds = static_cast<double>(gt_total.gt_rewrite_nanoseconds) / 1.0e9;
+        double gt_enumerate_seconds = static_cast<double>(gt_total.gt_enumerate_nanoseconds) / 1.0e9;
+
+        mCRL2log(log::verbose)
+          << "Generate_transitions total"
+          << " calls=" << gt_total.gt_calls
+          << " rewrite_seconds=" << gt_rewrite_seconds
+          << " enumerate_seconds=" << gt_enumerate_seconds
+          << '\n';
       }
 
-      double lock_seconds = static_cast<double>(total.lock_nanoseconds) / 1.0e9;
-      double work_seconds = static_cast<double>(total.work_nanoseconds) / 1.0e9;
-      double unlock_seconds = static_cast<double>(total.unlock_nanoseconds) / 1.0e9;
+      if (share_total.share_calls == 0)
+      {
+        mCRL2log(log::verbose) << "Share total calls=0\n";
+      }
+      else
+      {
+        double share_lock_seconds = static_cast<double>(share_total.share_lock_nanoseconds) / 1.0e9;
+        double share_work_seconds = static_cast<double>(share_total.share_work_nanoseconds) / 1.0e9;
+        double share_unlock_seconds = static_cast<double>(share_total.share_unlock_nanoseconds) / 1.0e9;
 
-      mCRL2log(log::verbose)
-        << "Share total"
-        << " calls=" << total.calls
-        << " lock_seconds=" << lock_seconds
-        << " work_seconds=" << work_seconds
-        << " unlock_seconds=" << unlock_seconds
-        << '\n';
+        mCRL2log(log::verbose)
+          << "Share total"
+          << " calls=" << share_total.share_calls
+          << " lock_seconds=" << share_lock_seconds
+          << " work_seconds=" << share_work_seconds
+          << " unlock_seconds=" << share_unlock_seconds
+          << '\n';
+      }
       discovered.print_stats();
       discovered.print_put_in_hashtable_statistics();
 
