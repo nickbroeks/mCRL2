@@ -230,6 +230,7 @@ namespace mcrl2::lps
             m_exclusive_state_access.unlock();
           }
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
+          e_stats.sleep_calls += 1;
           if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
           {
             m_exclusive_state_access.lock();
@@ -351,16 +352,14 @@ namespace mcrl2::lps
                                    examine_transition, start_state, finish_state, 
                                    m_global_rewr, m_global_sigma);  
       }
-      exp_stats gt_total{};
       exp_stats share_total{};
 
-      for (std::size_t thread_index = 0;
-          thread_index < m_exp_stats.size();
-          ++thread_index)
+      for (std::size_t thread_index = 1; thread_index < m_exp_stats.size(); ++thread_index)
       {
         const exp_stats& statistics =
             m_exp_stats[thread_index];
         share_total.share_calls += statistics.share_calls;
+        share_total.sleep_calls += statistics.sleep_calls;
         share_total.share_lock_nanoseconds += statistics.share_lock_nanoseconds;
         share_total.share_work_nanoseconds += statistics.share_work_nanoseconds;
         share_total.share_unlock_nanoseconds += statistics.share_unlock_nanoseconds;
@@ -391,6 +390,7 @@ namespace mcrl2::lps
           << " unlock_seconds=" << share_unlock_seconds
           << " first_idle_seconds=" << first_idle_seconds
           << " idle_seconds=" << idle_seconds
+          << " sleep calls=" << share_total.sleep_calls
           << '\n';
       }
       discovered.print_stats();
