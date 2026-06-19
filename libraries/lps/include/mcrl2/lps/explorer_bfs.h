@@ -160,7 +160,7 @@ namespace mcrl2::lps
               );
             }
 
-            if (global_todo_count.load(std::memory_order_acquire) < m_options.number_of_threads + 2 && thread_todo->size()>1)
+            if (global_todo_count.load(std::memory_order_acquire) < m_options.number_of_threads && thread_todo->size()>16)
             {
               std::size_t added_count = 0;
               auto share_start = std::chrono::steady_clock::now();
