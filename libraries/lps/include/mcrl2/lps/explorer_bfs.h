@@ -364,8 +364,8 @@ namespace mcrl2::lps
         share_total.share_lock_nanoseconds += statistics.share_lock_nanoseconds;
         share_total.share_work_nanoseconds += statistics.share_work_nanoseconds;
         share_total.share_unlock_nanoseconds += statistics.share_unlock_nanoseconds;
-        if (share_total.is_first) {
-          mCRL2log(log::verbose) << "Some thread didnt do anything";
+        if (statistics.is_first) {
+          mCRL2log(log::verbose) << "Some thread didnt do anything." << "\n";
         }
         share_total.first_idle_nanoseconds += statistics.first_idle_nanoseconds;
         share_total.idle_nanoseconds += statistics.idle_nanoseconds;
