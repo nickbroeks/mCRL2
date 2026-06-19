@@ -215,6 +215,12 @@ namespace mcrl2::lps
             thread_todo->finish_state();
           }
           idle_start = std::chrono::steady_clock::now();
+
+          // Check whether all processes are ready. If so the number_of_active_processes becomes 0. 
+          // Otherwise, this thread becomes active again, and tries to see whether the todo buffer is
+          // not empty, to take up more work. 
+          number_of_active_processes--;
+          number_of_idle_processes++;
         }
         else
         {
@@ -223,11 +229,6 @@ namespace mcrl2::lps
             m_exclusive_state_access.unlock();
           }
         }
-        // Check whether all processes are ready. If so the number_of_active_processes becomes 0. 
-        // Otherwise, this thread becomes active again, and tries to see whether the todo buffer is
-        // not empty, to take up more work. 
-        number_of_active_processes--;
-        number_of_idle_processes++;
         if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
         {
           m_exclusive_state_access.lock();
