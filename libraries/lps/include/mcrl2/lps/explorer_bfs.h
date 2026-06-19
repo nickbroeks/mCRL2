@@ -71,7 +71,12 @@ namespace mcrl2::lps
         if (!todo->empty())
         {
           idle_end = std::chrono::steady_clock::now();
-          e_stats.idle_nanoseconds += std::chrono::duration_cast<std::chrono::nanoseconds>(idle_end - idle_start).count();
+          if (e_stats.is_first) {
+            e_stats.is_first = false;
+            e_stats.first_idle_nanoseconds += std::chrono::duration_cast<std::chrono::nanoseconds>(idle_end - idle_start).count();
+          } else {
+            e_stats.idle_nanoseconds += std::chrono::duration_cast<std::chrono::nanoseconds>(idle_end - idle_start).count();
+          }
           todo->choose_element(current_state);
           thread_todo->insert(current_state);
           global_todo_count.fetch_sub(1, std::memory_order_release);
@@ -359,6 +364,7 @@ namespace mcrl2::lps
         share_total.share_lock_nanoseconds += statistics.share_lock_nanoseconds;
         share_total.share_work_nanoseconds += statistics.share_work_nanoseconds;
         share_total.share_unlock_nanoseconds += statistics.share_unlock_nanoseconds;
+        share_total.first_idle_nanoseconds += statistics.first_idle_nanoseconds;
         share_total.idle_nanoseconds += statistics.idle_nanoseconds;
       }
 
@@ -372,6 +378,7 @@ namespace mcrl2::lps
         double share_work_seconds = static_cast<double>(share_total.share_work_nanoseconds) / 1.0e9;
         double share_unlock_seconds = static_cast<double>(share_total.share_unlock_nanoseconds) / 1.0e9;
         double idle_seconds = static_cast<double>(share_total.idle_nanoseconds) / 1.0e9;
+        double first_idle_seconds = static_cast<double>(share_total.first_idle_nanoseconds) / 1.0e9;
 
         mCRL2log(log::verbose)
           << "Share total"
@@ -379,6 +386,7 @@ namespace mcrl2::lps
           << " lock_seconds=" << share_lock_seconds
           << " work_seconds=" << share_work_seconds
           << " unlock_seconds=" << share_unlock_seconds
+          << " first_idle_seconds=" << first_idle_seconds
           << " idle_seconds=" << idle_seconds
           << '\n';
       }

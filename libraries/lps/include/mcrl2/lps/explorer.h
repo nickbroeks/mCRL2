@@ -40,10 +40,12 @@ namespace mcrl2::lps {
 
 struct alignas(64) exp_stats {
   std::uint64_t share_calls = 0;
+  bool is_first = true;
   std::uint64_t share_lock_nanoseconds = 0;
   std::uint64_t share_unlock_nanoseconds = 0;
   std::uint64_t share_work_nanoseconds = 0;
   std::uint64_t idle_nanoseconds = 0;
+  std::uint64_t first_idle_nanoseconds = 0;
 };
 
 template <bool Stochastic, bool Timed, typename Specification>
