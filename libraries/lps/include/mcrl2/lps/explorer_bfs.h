@@ -88,7 +88,7 @@ namespace mcrl2::lps
             thread_todo->insert(current_state);
           }
 
-          global_todo_count.fetch_sub(1, std::memory_order_release);
+          global_todo_count.fetch_sub(pick_count, std::memory_order_release);
           if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
           {
             m_exclusive_state_access.unlock();
