@@ -18,6 +18,13 @@
 
 namespace mcrl2::lps
 {
+    struct alignas(64) exp_stats {
+      std::uint64_t calls = 0;
+      std::uint64_t lock_nanoseconds = 0;
+      std::uint64_t unlock_nanoseconds = 0;
+      std::uint64_t work_nanoseconds = 0;
+    };
+    std::vector<exp_stats> m_exp_stats;
     template <bool Stochastic, bool Timed, typename Specification>
     template <
       typename StateType,
@@ -56,7 +63,7 @@ namespace mcrl2::lps
       std::vector<state> dummy;
       std::unique_ptr<todo_set> thread_todo=make_todo_set(dummy.begin(),dummy.end()); // The new states for each process are temporarily stored in this vector for each thread. 
       atermpp::aterm key;
-
+      exp_stats& e_stats = m_exp_stats[thread_index];
       if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
       {
         m_exclusive_state_access.lock();
@@ -76,13 +83,13 @@ namespace mcrl2::lps
           }
 
           while (!thread_todo->empty() && !m_must_abort.load(std::memory_order_relaxed))
-          { 
+          {
             thread_todo->choose_element(current_state);
             std::size_t s_index = discovered.index(current_state,thread_index);
             start_state(thread_index, current_state, s_index);
             data::add_assignments(thread_sigma, m_process_parameters, current_state);
             for (const explorer_summand& summand: regular_summands)
-            {   
+            {
               generate_transitions(
                 summand,
                 confluent_summands,
@@ -155,13 +162,15 @@ namespace mcrl2::lps
               );
             }
 
-            if (number_of_idle_processes > 0 && global_todo_count.load(std::memory_order_acquire) < 4 && thread_todo->size()>1)
+            if (number_of_idle_processes > 0 && global_todo_count.load(std::memory_order_acquire) < m_options.number_of_threads + 2 && thread_todo->size()>1)
             {
               std::size_t added_count = 0;
+              auto share_start = std::chrono::steady_clock::now();
               if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
               {
                 m_exclusive_state_access.lock();
               }
+              auto share_locked = std::chrono::steady_clock::now();
 
               if (todo->size() < m_options.number_of_threads) 
               {
@@ -173,11 +182,18 @@ namespace mcrl2::lps
                   added_count += 1;
                 }
               }
+              auto share_done = std::chrono::steady_clock::now();
 
               if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
               {
                 m_exclusive_state_access.unlock();
               }
+
+              auto share_unlocked = std::chrono::steady_clock::now();
+              e_stats.calls += 1;
+              e_stats.lock_nanoseconds += std::chrono::duration_cast<std::chrono::nanoseconds>(share_locked - share_start).count();
+              e_stats.work_nanoseconds += std::chrono::duration_cast<std::chrono::nanoseconds>(share_done - share_locked).count();
+              e_stats.unlock_nanoseconds += std::chrono::duration_cast<std::chrono::nanoseconds>(share_unlocked - share_done).count();
               global_todo_count.fetch_add(added_count, std::memory_order_release);
             }
 
@@ -295,6 +311,7 @@ namespace mcrl2::lps
       {
         std::vector<std::thread> threads;
         threads.reserve(number_of_threads);
+        m_exp_stats.resize(number_of_threads + 1);
         for(std::size_t i=1; i<=number_of_threads; ++i)  // Threads are numbered from 1 to number_of_threads. Thread number 0 is reserved as 
                                                          // indicator for a sequential implementation. 
         {
@@ -330,6 +347,40 @@ namespace mcrl2::lps
                                    examine_transition, start_state, finish_state, 
                                    m_global_rewr, m_global_sigma);  
       }
+      exp_stats total{};
+
+      for (std::size_t thread_index = 0;
+          thread_index < m_exp_stats.size();
+          ++thread_index)
+      {
+        const exp_stats& statistics =
+            m_exp_stats[thread_index];
+
+        total.calls += statistics.calls;
+        total.lock_nanoseconds += statistics.lock_nanoseconds;
+        total.work_nanoseconds += statistics.work_nanoseconds;
+        total.unlock_nanoseconds += statistics.unlock_nanoseconds;
+      }
+
+      if (total.calls == 0)
+      {
+        mCRL2log(log::verbose) << "put_in_hashtable total calls=0\n";
+        return;
+      }
+
+      double lock_seconds = static_cast<double>(total.lock_nanoseconds) / 1.0e9;
+      double work_seconds = static_cast<double>(total.work_nanoseconds) / 1.0e9;
+      double unlock_seconds = static_cast<double>(total.unlock_nanoseconds) / 1.0e9;
+
+      mCRL2log(log::verbose)
+        << "Share total"
+        << " calls=" << total.calls
+        << " lock_seconds=" << lock_seconds
+        << " work_seconds=" << work_seconds
+        << " unlock_seconds=" << unlock_seconds
+        << '\n';
+      discovered.print_stats();
+      discovered.print_put_in_hashtable_statistics();
 
       m_must_abort = false;
     }

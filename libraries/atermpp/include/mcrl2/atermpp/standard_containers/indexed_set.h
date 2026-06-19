@@ -29,7 +29,13 @@ template<typename Key,
 class indexed_set: public mcrl2::utilities::indexed_set<Key, ThreadSafe, Hash, Equals, Allocator, KeyTable>
 {
   using super = mcrl2::utilities::indexed_set<Key, ThreadSafe, Hash, Equals, Allocator, KeyTable>;
-
+struct alignas(64) indexed_set_stats {
+        std::uint64_t calls = 0;
+        std::uint64_t lock_nanoseconds = 0;
+        std::uint64_t unlock_nanoseconds = 0;
+        std::uint64_t work_nanoseconds = 0;
+    };
+    std::vector<indexed_set_stats> m_indexed_set_stats_;
 public:
   using size_type = typename super::size_type;
 
@@ -39,7 +45,9 @@ public:
   /// \brief Constructor of an empty indexed set. Starts with a hashtable of size 128.
   indexed_set(std::size_t number_of_threads)
     : super(number_of_threads)
-  {}
+  {
+    m_indexed_set_stats_.resize(number_of_threads + 1);
+  }
 
   /// \brief Constructor of an empty index set. Starts with a hashtable of the indicated size. 
   /// \param initial_hashtable_size The initial size of the hashtable.
@@ -61,11 +69,52 @@ public:
 
   std::pair<size_type, bool> insert(const Key& key, std::size_t thread_index=0)
   {
+    std::chrono::steady_clock::time_point start_lock = std::chrono::steady_clock::now();
     mcrl2::utilities::shared_guard guard = detail::g_thread_term_pool().lock_shared();
-    return super::insert(key, thread_index);
+    std::chrono::steady_clock::time_point start_work = std::chrono::steady_clock::now();
+    auto res = super::insert(key, thread_index);
+    std::chrono::steady_clock::time_point start_unlock = std::chrono::steady_clock::now();
+    guard.unlock_shared();
+    std::chrono::steady_clock::time_point end_unlock = std::chrono::steady_clock::now();
+    indexed_set_stats& statistics = m_indexed_set_stats_[thread_index];
+    statistics.calls += 1;
+    statistics.lock_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(start_work - start_lock).count());
+    statistics.work_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(start_unlock - start_work).count());
+    statistics.unlock_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_unlock - start_unlock).count());
+
+    return res;
+  }
+
+  void print_stats() const {
+    indexed_set_stats total{};
+    for (std::size_t thread_index = 0; thread_index < m_indexed_set_stats_.size(); ++thread_index) {
+      const indexed_set_stats& statistics = m_indexed_set_stats_[thread_index];
+      total.calls += statistics.calls;
+      total.lock_nanoseconds += statistics.lock_nanoseconds;
+      total.unlock_nanoseconds += statistics.unlock_nanoseconds;
+      total.work_nanoseconds += statistics.work_nanoseconds;
+    }
+
+    if (total.calls == 0)
+    {
+      std::cout << "put_in_hashtable total calls=0\n";
+      return;
+    }
+
+    double lock_seconds = static_cast<double>(total.lock_nanoseconds) / 1.0e9 ;
+    double unlock_seconds = static_cast<double>(total.unlock_nanoseconds) / 1.0e9 ;
+    double work_seconds = static_cast<double>(total.work_nanoseconds) / 1.0e9 ;
+
+    std::cout
+      << "aTerm indexed set total"
+      << " calls=" << total.calls
+      << " lock_seconds=" << lock_seconds
+      << " unlock_seconds=" << unlock_seconds
+      << " work_seconds=" << work_seconds
+      << '\n';
+
   }
 };
-
 } // end namespace atermppp
 
 namespace mcrl2::utilities::detail
