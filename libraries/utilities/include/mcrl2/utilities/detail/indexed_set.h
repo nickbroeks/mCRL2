@@ -57,7 +57,8 @@ inline void INDEXED_SET::reserve_indices(const std::size_t thread_index)
   lock_guard guard = m_shared_mutexes[thread_index].lock();
 
   std::chrono::steady_clock::time_point work_start = std::chrono::steady_clock::now();
-  if (m_next_index + m_shared_mutexes.size() >= m_keys.size())   // otherwise another process already reserved entries, and nothing needs to be done. 
+  bool needs_to_resize = m_next_index + m_shared_mutexes.size() >= m_keys.size();
+  if (needs_to_resize)   // otherwise another process already reserved entries, and nothing needs to be done. 
   {
     assert(m_next_index <= m_keys.size());
     m_keys.resize(m_keys.size() + std::max(m_keys.size() / detail::RESERVATION_FRACTION, m_shared_mutexes.size()));  // Increase with at least the number of threads. 
@@ -70,7 +71,13 @@ inline void INDEXED_SET::reserve_indices(const std::size_t thread_index)
   std::chrono::steady_clock::time_point work_end = std::chrono::steady_clock::now();
   guard.unlock();
   std::chrono::steady_clock::time_point unlock_end = std::chrono::steady_clock::now();
-  statistics.reserve_lock_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(work_start - lock_start).count());
+  if (needs_to_resize) {
+    statistics.reserve_good_lock_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(work_start - lock_start).count());
+    statistics.reserve_good_locks += 1;
+  } else {
+    statistics.reserve_bad_lock_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(work_start - lock_start).count());
+    statistics.reserve_bad_locks += 1;
+  }
   statistics.reserve_work_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(work_end - work_start).count());
   statistics.reserve_unlock_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(unlock_end - work_end).count());
 }
@@ -357,7 +364,10 @@ inline void INDEXED_SET::print_put_in_hashtable_statistics() const
     total.calls += statistics.calls;
     total.lock_nanoseconds += statistics.lock_nanoseconds;
     total.reserve_nanoseconds += statistics.reserve_nanoseconds;
-    total.reserve_lock_nanoseconds += statistics.reserve_lock_nanoseconds;
+    total.reserve_good_lock_nanoseconds += statistics.reserve_good_lock_nanoseconds;
+    total.reserve_good_locks += statistics.reserve_good_locks;
+    total.reserve_bad_lock_nanoseconds += statistics.reserve_bad_lock_nanoseconds;
+    total.reserve_bad_locks += statistics.reserve_bad_locks;
     total.reserve_work_nanoseconds += statistics.reserve_work_nanoseconds;
     total.reserve_unlock_nanoseconds += statistics.reserve_unlock_nanoseconds;
     total.hashtable_nanoseconds += statistics.hashtable_nanoseconds;
@@ -372,7 +382,8 @@ inline void INDEXED_SET::print_put_in_hashtable_statistics() const
 
   double lock_seconds = static_cast<double>(total.lock_nanoseconds) / 1.0e9;
   double reserve_seconds = static_cast<double>(total.reserve_nanoseconds) / 1.0e9;
-  double reserve_lock_seconds = static_cast<double>(total.reserve_lock_nanoseconds) / 1.0e9;
+  double reserve_good_lock_seconds = static_cast<double>(total.reserve_good_lock_nanoseconds) / 1.0e9;
+  double reserve_bad_lock_seconds = static_cast<double>(total.reserve_bad_lock_nanoseconds) / 1.0e9;
   double reserve_work_seconds = static_cast<double>(total.reserve_work_nanoseconds) / 1.0e9;
   double reserve_unlock_seconds = static_cast<double>(total.reserve_unlock_nanoseconds) / 1.0e9;
   double hashtable_seconds = static_cast<double>(total.hashtable_nanoseconds) / 1.0e9;
@@ -383,7 +394,10 @@ inline void INDEXED_SET::print_put_in_hashtable_statistics() const
     << " calls=" << total.calls
     << " lock(s)=" << lock_seconds
     << " reserve(s)=" << reserve_seconds
-    << " reserve_l(s)=" << reserve_lock_seconds
+    << " reserve_gl=" << total.reserve_good_locks
+    << " reserve_gl(s)=" << reserve_good_lock_seconds
+    << " reserve_bl=" << total.reserve_bad_locks
+    << " reserve_bl(s)=" << reserve_bad_lock_seconds
     << " reserve_w(s)=" << reserve_work_seconds
     << " reserve_u(s)=" << reserve_unlock_seconds
     << " hashtable(s)=" << hashtable_seconds
