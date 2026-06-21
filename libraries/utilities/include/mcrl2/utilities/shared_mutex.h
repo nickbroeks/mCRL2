@@ -66,6 +66,10 @@ public:
   /// Unlocks the acquired shared guard explicitly. Otherwise, performed in destructor.
   void unlock();
 
+  inline
+  void try_lock();
+
+
   ~lock_guard()
   {
     if (is_locked)
@@ -74,6 +78,7 @@ public:
     }
   }
 
+  bool is_locked = true;
 private:
   friend class shared_mutex;
 
@@ -81,8 +86,12 @@ private:
     : m_mutex(mutex)
   {}
 
+  // Private constructor for creating an unlocked guard (used by try_lock)
+  lock_guard(shared_mutex& mutex, bool locked)
+    : m_mutex(mutex), is_locked(locked)
+  {}
+
   shared_mutex& m_mutex;
-  bool is_locked = true;
 };
 
 struct shared_mutex_data 
@@ -175,6 +184,15 @@ public:
     return lock_guard(*this);
   }
 
+  // Try to obtain exclusive access to the busy-forbidden lock without blocking.
+  // Returns a lock_guard with is_locked set to true if successful, false otherwise.
+  inline
+  lock_guard try_lock()
+  {
+    bool acquired = try_lock_impl();
+    return lock_guard(*this, acquired);
+  }
+
   // Release exclusive access to the busy-forbidden lock.
   inline
   void unlock()
@@ -228,6 +246,45 @@ public:
         }
       }
     }
+  }
+
+  inline
+  bool try_lock_impl()
+  {
+    if constexpr (mcrl2::utilities::detail::GlobalThreadSafe)
+    {
+      // Shared and exclusive sections MUST be disjoint.
+      assert(!m_busy_flag);
+      
+      // Try to obtain exclusive access to the global mutex without blocking.
+      if (!m_shared->mutex.try_lock())
+      {
+        return false;
+      }
+
+      assert(std::find(m_shared->other.begin(), m_shared->other.end(), this) != m_shared->other.end());
+
+      // Check if any other mutexes are busy (non-blocking check).
+      for (const auto& mutex : m_shared->other)
+      {
+        if (mutex != this && mutex->is_busy())
+        {
+          // Cannot acquire lock, release and return false.
+          m_shared->mutex.unlock();
+          return false;
+        }
+      }
+
+      // Indicate that threads must wait.
+      for (auto& mutex : m_shared->other)
+      {
+        if (mutex != this)
+        {
+          mutex->set_forbidden(true);
+        }
+      }
+    }
+    return true;
   }
       
   inline
@@ -337,6 +394,11 @@ void lock_guard::unlock()
 {
   m_mutex.unlock();
   is_locked = false;
+}
+inline
+void lock_guard::try_lock()
+{
+  is_locked = m_mutex.try_lock_impl();
 }
 
 } // namespace mcrl2::utilities

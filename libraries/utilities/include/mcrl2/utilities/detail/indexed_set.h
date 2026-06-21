@@ -54,7 +54,15 @@ inline void INDEXED_SET::reserve_indices(const std::size_t thread_index)
 {
   put_in_hashtable_statistics& statistics = m_put_statistics[thread_index];
   std::chrono::steady_clock::time_point lock_start = std::chrono::steady_clock::now();
-  lock_guard guard = m_shared_mutexes[thread_index].lock();
+  lock_guard guard = m_shared_mutexes[thread_index].try_lock();
+  while (!guard.is_locked) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    if (m_next_index + m_shared_mutexes.size() < m_keys.size()) {
+      return;
+    }
+    guard.try_lock();
+  }
+  ;
 
   std::chrono::steady_clock::time_point work_start = std::chrono::steady_clock::now();
   bool needs_to_resize = m_next_index + m_shared_mutexes.size() >= m_keys.size();
@@ -67,17 +75,15 @@ inline void INDEXED_SET::reserve_indices(const std::size_t thread_index)
     {
        resize_hashtable();
     }
-  }
-  std::chrono::steady_clock::time_point work_end = std::chrono::steady_clock::now();
-  guard.unlock();
-  std::chrono::steady_clock::time_point unlock_end = std::chrono::steady_clock::now();
-  if (needs_to_resize) {
     statistics.reserve_good_lock_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(work_start - lock_start).count());
     statistics.reserve_good_locks += 1;
   } else {
     statistics.reserve_bad_lock_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(work_start - lock_start).count());
     statistics.reserve_bad_locks += 1;
   }
+  std::chrono::steady_clock::time_point work_end = std::chrono::steady_clock::now();
+  guard.unlock();
+  std::chrono::steady_clock::time_point unlock_end = std::chrono::steady_clock::now();
   statistics.reserve_work_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(work_end - work_start).count());
   statistics.reserve_unlock_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(unlock_end - work_end).count());
 }

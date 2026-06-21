@@ -11,6 +11,8 @@
 
 #include <deque>
 #include <mutex>
+#include <thread>
+#include <type_traits>
 
 #include "mcrl2/utilities/unordered_map.h"
 #include "mcrl2/utilities/detail/atomic_wrapper.h"
