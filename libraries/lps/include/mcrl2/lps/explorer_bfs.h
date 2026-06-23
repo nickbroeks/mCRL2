@@ -33,6 +33,7 @@ namespace mcrl2::lps
       const std::size_t thread_index,
       std::atomic<std::size_t>& number_of_active_processes,
       std::atomic<std::size_t>& number_of_idle_processes,
+      std::atomic<std::size_t>& global_todo_count,
       const SummandSequence& regular_summands,
       const SummandSequence& confluent_summands,
       indexed_set_for_states_type& discovered,
@@ -68,6 +69,7 @@ namespace mcrl2::lps
         {
           todo->choose_element(current_state);
           thread_todo->insert(current_state);
+          global_todo_count.fetch_sub(1, std::memory_order_release);
           if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
           {
             m_exclusive_state_access.unlock();
@@ -153,8 +155,9 @@ namespace mcrl2::lps
               );
             }
 
-            if (number_of_idle_processes>0 && thread_todo->size()>1)
+            if (global_todo_count.load(std::memory_order_acquire) < m_options.number_of_threads && thread_todo->size()>1)
             {
+              std::size_t added_count = 0;
               if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
               {
                 m_exclusive_state_access.lock();
@@ -167,6 +170,7 @@ namespace mcrl2::lps
                 {
                   thread_todo->choose_element(current_state);
                   todo->insert(current_state);
+                  added_count += 1;
                 }
               }
 
@@ -174,6 +178,7 @@ namespace mcrl2::lps
               {
                 m_exclusive_state_access.unlock();
               }
+              global_todo_count.fetch_add(added_count, std::memory_order_release);
             }
 
             finish_state(thread_index, m_options.number_of_threads, current_state, s_index, thread_todo->size());
@@ -282,8 +287,7 @@ namespace mcrl2::lps
         discover_state(initialisation_thread_index, s0, s0_index);
       }
 
-      std::atomic<std::size_t> number_of_active_processes=number_of_threads;
-      std::atomic<std::size_t> number_of_idle_processes=0;
+      std::atomic<std::size_t> global_todo_count=todo->size();
 
       if (number_of_threads>1)
       {
