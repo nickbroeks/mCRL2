@@ -18,6 +18,7 @@
 #include "mcrl2/data/find_quantifier_variables.h"
 #include "mcrl2/utilities/detail/io.h"
 #include "mcrl2/utilities/skip.h"
+#include "mcrl2/utilities/statistics.h"
 #include "mcrl2/atermpp/standard_containers/vector.h"
 #include "mcrl2/atermpp/standard_containers/indexed_set.h"
 #include "mcrl2/atermpp/standard_containers/detail/unordered_map_implementation.h"
@@ -37,7 +38,6 @@
 #include "mcrl2/lps/stochastic_state.h"
 
 namespace mcrl2::lps {
-
 template <bool Stochastic, bool Timed, typename Specification>
 class explorer: public abortable
 {
@@ -80,6 +80,9 @@ class explorer: public abortable
     bool m_recursive = false;
     std::vector<explorer_summand> m_regular_summands;
     std::vector<explorer_summand> m_confluent_summands;
+    std::vector<mcrl2::utilities::lock_stats> m_take_stats;
+    std::vector<mcrl2::utilities::lock_stats> m_share_stats;
+    std::vector<mcrl2::utilities::lock_stats> m_revive_stats;
 
     volatile std::atomic<bool> m_must_abort = false;
 

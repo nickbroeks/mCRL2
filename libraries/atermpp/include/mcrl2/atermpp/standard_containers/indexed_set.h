@@ -13,6 +13,7 @@
 #include "mcrl2/atermpp/standard_containers/deque.h"
 #include "mcrl2/utilities/detail/container_utility.h"
 #include "mcrl2/utilities/indexed_set.h"
+#include "mcrl2/utilities/statistics.h"
 #include "mcrl2/utilities/shared_mutex.h"
 
 
@@ -29,8 +30,9 @@ template<typename Key,
 class indexed_set: public mcrl2::utilities::indexed_set<Key, ThreadSafe, Hash, Equals, Allocator, KeyTable>
 {
   using super = mcrl2::utilities::indexed_set<Key, ThreadSafe, Hash, Equals, Allocator, KeyTable>;
-
+  using timer = std::chrono::steady_clock::time_point;
 public:
+  std::vector<mcrl2::utilities::lock_stats> m_indexed_set_stats_;
   using size_type = typename super::size_type;
 
   /// \brief Constructor of an empty indexed set. Starts with a hashtable of size 128.
@@ -39,7 +41,9 @@ public:
   /// \brief Constructor of an empty indexed set. Starts with a hashtable of size 128.
   indexed_set(std::size_t number_of_threads)
     : super(number_of_threads)
-  {}
+  {
+    m_indexed_set_stats_.resize(number_of_threads + 1);
+  }
 
   /// \brief Constructor of an empty index set. Starts with a hashtable of the indicated size. 
   /// \param initial_hashtable_size The initial size of the hashtable.
@@ -61,11 +65,23 @@ public:
 
   std::pair<size_type, bool> insert(const Key& key, std::size_t thread_index=0)
   {
+    mcrl2::utilities::lock_stats& statistics = m_indexed_set_stats_[thread_index];
+    timer start_lock = std::chrono::steady_clock::now();
     mcrl2::utilities::shared_guard guard = detail::g_thread_term_pool().lock_shared();
-    return super::insert(key, thread_index);
+    timer start_work = std::chrono::steady_clock::now();
+    std::pair<size_type, bool> res = super::insert(key, thread_index);
+    timer end_work = std::chrono::steady_clock::now();
+    statistics.calls += 1;
+    statistics.lock_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(start_work - start_lock).count());
+    statistics.work_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_work - start_work).count());
+
+    return res;
+  }
+
+  void print_stats() const {
+    std::cout << mcrl2::utilities::format_three_field_stats("aTerm indexed set total", m_indexed_set_stats_);
   }
 };
-
 } // end namespace atermppp
 
 namespace mcrl2::utilities::detail

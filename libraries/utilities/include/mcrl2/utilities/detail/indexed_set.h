@@ -52,6 +52,8 @@ static_assert(minimal_hashtable_size>=8);       ///< With a max_load of 0.75 the
 INDEXED_SET_TEMPLATE
 inline void INDEXED_SET::reserve_indices(const std::size_t thread_index)
 {
+  mcrl2::utilities::lock_stats& reserve_stats = m_reserve_stats[thread_index];
+  timer lock_start = std::chrono::steady_clock::now();
   lock_guard guard = m_shared_mutexes[thread_index].try_lock();
   while (!guard.is_locked) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -62,6 +64,7 @@ inline void INDEXED_SET::reserve_indices(const std::size_t thread_index)
   }
   ;
 
+  timer work_start = std::chrono::steady_clock::now();
   bool needs_to_resize = m_next_index + m_shared_mutexes.size() >= m_keys.size();
   if (needs_to_resize)   // otherwise another process already reserved entries, and nothing needs to be done. 
   {
@@ -73,6 +76,10 @@ inline void INDEXED_SET::reserve_indices(const std::size_t thread_index)
        resize_hashtable();
     }
   }
+  timer work_end = std::chrono::steady_clock::now();
+  reserve_stats.work_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(work_end - work_start).count());
+  reserve_stats.lock_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(work_start - lock_start).count());
+  reserve_stats.calls += 1;
 }
 
 INDEXED_SET_TEMPLATE
@@ -180,6 +187,8 @@ inline INDEXED_SET::indexed_set(
     // Copy the mutex n times for all the other threads.
     m_shared_mutexes.emplace_back(m_shared_mutexes[0]);
   }
+  m_put_statistics.resize(m_shared_mutexes.size());
+  m_reserve_stats.resize(m_shared_mutexes.size());
 }
 
 INDEXED_SET_TEMPLATE
@@ -265,7 +274,24 @@ inline void INDEXED_SET::clear(const std::size_t thread_index)
 INDEXED_SET_TEMPLATE
 inline std::pair<typename INDEXED_SET::size_type, bool> INDEXED_SET::insert(const Key& key, const std::size_t thread_index)
 {
+  timer lock_start;
+  timer lock_end;
+  timer reserve_end;
+  timer hashtable_end;
+  timer finalize_end;
+
+  assert(thread_index < m_shared_mutexes.size());
+  assert(thread_index < m_put_statistics.size());
+
+  put_in_hashtable_statistics& statistics =
+      m_put_statistics[thread_index];
+
+  statistics.calls++;
+
+  lock_start = std::chrono::steady_clock::now();
   shared_guard guard = m_shared_mutexes[thread_index].lock_shared();
+  lock_end = std::chrono::steady_clock::now();
+
   assert(m_next_index <= m_keys.size());
   if (m_next_index + m_shared_mutexes.size() >= m_keys.size())
   {
@@ -273,12 +299,21 @@ inline std::pair<typename INDEXED_SET::size_type, bool> INDEXED_SET::insert(cons
     reserve_indices(thread_index);
     guard.lock_shared();
   }
+  reserve_end = std::chrono::steady_clock::now();
   std::size_t new_position;
   const std::size_t index = put_in_hashtable(key, detail::RESERVED, new_position);
+  
+  hashtable_end = std::chrono::steady_clock::now();
+
+  statistics.lock_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(lock_end - lock_start).count());
+  statistics.reserve_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(reserve_end - lock_end).count());
+  statistics.hashtable_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(hashtable_end - reserve_end).count());
   
   if (index != detail::RESERVED) // Key already exists.
   {
     assert(index < m_next_index && m_next_index <= m_keys.size());
+    finalize_end = std::chrono::steady_clock::now();
+    statistics.finalize_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(finalize_end - hashtable_end).count());
     return std::make_pair(index, false);
   }
 
@@ -292,9 +327,50 @@ inline std::pair<typename INDEXED_SET::size_type, bool> INDEXED_SET::insert(cons
 
 
   assert(new_index < m_next_index && m_next_index <= m_keys.size());
+  finalize_end = std::chrono::steady_clock::now();
+  statistics.finalize_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(finalize_end - hashtable_end).count());
   return std::make_pair(new_index, true);
 }
 
+INDEXED_SET_TEMPLATE
+inline void INDEXED_SET::reset_put_in_hashtable_statistics()
+{
+  // This function is deliberately not synchronized. It must only be called
+  // before worker threads start or after they have all joined.
+  for (put_in_hashtable_statistics& statistics: m_put_statistics)
+  {
+    statistics = put_in_hashtable_statistics{};
+  }
+}
+INDEXED_SET_TEMPLATE
+inline void INDEXED_SET::print_put_in_hashtable_statistics() const
+{
+  put_in_hashtable_statistics total{};
+
+  for (std::size_t thread_index = 0; thread_index < m_put_statistics.size(); ++thread_index)
+  {
+    const put_in_hashtable_statistics& statistics = m_put_statistics[thread_index];
+
+    total.calls += statistics.calls;
+    total.lock_nanoseconds += statistics.lock_nanoseconds;
+    total.reserve_nanoseconds += statistics.reserve_nanoseconds;
+    total.hashtable_nanoseconds += statistics.hashtable_nanoseconds;
+    total.finalize_nanoseconds += statistics.finalize_nanoseconds;
+  }
+
+  if (total.calls == 0)
+  {
+    mCRL2log(log::verbose) << "put_in_hashtable total calls=0\n";
+    return;
+  }
+
+  mCRL2log(log::verbose) << "put_in_hashtable total: " << total.calls << "\n"
+  << "   - lock: " << total.lock_nanoseconds / 1e9 << "\n"
+  << "   - reserve: " << total.reserve_nanoseconds / 1e9 << "\n"
+  << "       -" << mcrl2::utilities::format_three_field_stats("reserver total", m_reserve_stats)
+  << "   - hashtable: " << total.hashtable_nanoseconds / 1e9 << "\n"
+  << "   - finalize: " << total.finalize_nanoseconds / 1e9 << "\n";
+}
 #undef INDEXED_SET_TEMPLATE 
 #undef INDEXED_SET 
 

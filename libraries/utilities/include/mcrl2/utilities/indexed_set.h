@@ -11,14 +11,18 @@
 
 #include <deque>
 #include <mutex>
+#include <thread>
+#include <type_traits>
 
 #include "mcrl2/utilities/unordered_map.h"
 #include "mcrl2/utilities/detail/atomic_wrapper.h"
 #include "mcrl2/utilities/shared_mutex.h"
+#include "mcrl2/utilities/statistics.h"
 
 
 namespace mcrl2::utilities
 {
+using timer = std::chrono::steady_clock::time_point;
 
 /// \brief A set that assigns each element an unique index.
 template<typename Key,
@@ -36,6 +40,24 @@ private:
   /// \brief Mutex for the m_hashtable and m_keys data structures.
   mutable std::shared_ptr<std::mutex> m_mutex;
   mutable std::vector<shared_mutex> m_shared_mutexes;
+
+  /// Diagnostic statistics for put_in_hashtable.
+  ///
+  /// Each worker writes exclusively to the entry corresponding to its
+  /// thread_index. The entries therefore do not need atomic members.
+  struct alignas(64) put_in_hashtable_statistics
+  {
+    std::uint64_t calls = 0;
+
+    std::uint64_t lock_nanoseconds = 0;
+    std::uint64_t reserve_nanoseconds = 0;
+    std::uint64_t hashtable_nanoseconds = 0;
+    std::uint64_t finalize_nanoseconds = 0;
+  };
+
+  /// One statistics record per valid thread index.
+  std::vector<put_in_hashtable_statistics> m_put_statistics;
+  std::vector<mcrl2::utilities::lock_stats> m_reserve_stats;
 
   /// m_next_index indicates the next index that 
   //  has not yet been used. This allows to increase m_keys in 
@@ -232,6 +254,17 @@ public:
     size_type result=m_next_index;
     return result;
   }
+  /// Reset profiling statistics.
+  ///
+  /// This may only be called when no other thread is accessing this
+  /// indexed_set.
+  void reset_put_in_hashtable_statistics();
+
+  /// Print profiling statistics.
+  ///
+  /// This may only be called when no other thread is updating the
+  /// statistics, normally after all worker threads have joined.
+  void print_put_in_hashtable_statistics() const;
 };
 
 } // end namespace utilities
