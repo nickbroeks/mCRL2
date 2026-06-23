@@ -378,8 +378,15 @@ void aterm_pool::resize_if_needed(mcrl2::utilities::shared_mutex& mutex)
   {
     return;
   }
-
-  mcrl2::utilities::lock_guard guard = mutex.lock();
+  mcrl2::utilities::lock_guard guard = mutex.try_lock();
+  while (!guard.is_locked) {
+    std::this_thread::sleep_for(std::chrono::nanoseconds(50));
+    if (m_count_until_resize > 0) {
+      return;
+    }
+    guard.try_lock();
+  }
+  assert(guard.is_locked);
   if (m_count_until_resize > 0)
   {
     // Another thread has resized the tables, so we can ignore it.
