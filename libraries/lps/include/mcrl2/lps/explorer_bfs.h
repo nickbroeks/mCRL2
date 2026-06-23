@@ -67,9 +67,17 @@ namespace mcrl2::lps
           
         if (!todo->empty())
         {
+          std::size_t pick_count = 1;
+          if (number_of_idle_processes == 0) {
+            std::size_t max_pick_count = 5;
+            pick_count = std::min(todo->size(),max_pick_count);
+          }
+          for(std::size_t i=0; i<pick_count; ++i)  
+        {
           todo->choose_element(current_state);
           thread_todo->insert(current_state);
-          global_todo_count.fetch_sub(1, std::memory_order_release);
+          }
+          global_todo_count.fetch_sub(pick_count, std::memory_order_release);
           if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
           {
             m_exclusive_state_access.unlock();
