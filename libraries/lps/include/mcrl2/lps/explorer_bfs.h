@@ -311,7 +311,7 @@ namespace mcrl2::lps
                                                          StartState, FinishState,
                                                          DiscoverInitialState >
                                        (todo, 
-                                        i, number_of_active_processes, number_of_idle_processes,
+                                        i, number_of_active_processes, number_of_idle_processes, global_todo_count,
                                         regular_summands,confluent_summands,discovered, discover_state,
                                         examine_transition, start_state, finish_state, 
                                         m_global_rewr.clone(), m_global_sigma); } );  // It is essential that the rewriter is cloned as
@@ -332,7 +332,7 @@ namespace mcrl2::lps
                                                 DiscoverState, ExamineTransition,
                                                 StartState, FinishState,
                                                 DiscoverInitialState >
-                                  (todo,single_thread_index,number_of_active_processes, number_of_idle_processes,
+                                  (todo,single_thread_index,number_of_active_processes, number_of_idle_processes, global_todo_count,
                                    regular_summands,confluent_summands,discovered, discover_state,
                                    examine_transition, start_state, finish_state, 
                                    m_global_rewr, m_global_sigma);  

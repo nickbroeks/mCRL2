@@ -77,8 +77,6 @@ public:
       unlock();
     }
   }
-
-  bool is_locked = true;
 private:
   friend class shared_mutex;
 
@@ -92,6 +90,8 @@ private:
   {}
 
   shared_mutex& m_mutex;
+public:
+  bool is_locked = true;
 };
 
 struct shared_mutex_data 
