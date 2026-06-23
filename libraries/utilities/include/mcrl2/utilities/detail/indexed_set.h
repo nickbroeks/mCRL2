@@ -52,9 +52,18 @@ static_assert(minimal_hashtable_size>=8);       ///< With a max_load of 0.75 the
 INDEXED_SET_TEMPLATE
 inline void INDEXED_SET::reserve_indices(const std::size_t thread_index)
 {
-  lock_guard guard = m_shared_mutexes[thread_index].lock();
+  lock_guard guard = m_shared_mutexes[thread_index].try_lock();
+  while (!guard.is_locked) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    if (m_next_index + m_shared_mutexes.size() < m_keys.size()) {
+      return;
+    }
+    guard.try_lock();
+  }
+  ;
 
-  if (m_next_index + m_shared_mutexes.size() >= m_keys.size())   // otherwise another process already reserved entries, and nothing needs to be done. 
+  bool needs_to_resize = m_next_index + m_shared_mutexes.size() >= m_keys.size();
+  if (needs_to_resize)   // otherwise another process already reserved entries, and nothing needs to be done. 
   {
     assert(m_next_index <= m_keys.size());
     m_keys.resize(m_keys.size() + std::max(m_keys.size() / detail::RESERVATION_FRACTION, m_shared_mutexes.size()));  // Increase with at least the number of threads. 
