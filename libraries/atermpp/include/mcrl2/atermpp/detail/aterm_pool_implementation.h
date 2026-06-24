@@ -43,6 +43,11 @@ aterm_pool::aterm_pool() :
   create_appl(reinterpret_cast<aterm&>(m_empty_list), m_function_symbol_pool.as_empty_list());
 }
 
+aterm_pool::~aterm_pool()
+{
+  print_performance_statistics();
+}
+
 void aterm_pool::add_deletion_hook(function_symbol sym, term_callback callback)
 {
   const std::size_t arity = sym.arity();
@@ -93,15 +98,29 @@ void aterm_pool::collect(mcrl2::utilities::shared_mutex& mutex)
   collect_impl(mutex);
 } 
 
+void aterm_pool::record_shared_mutex_lock(shared_mutex_lock_task task, const std::chrono::steady_clock::time_point lock_start, const std::chrono::steady_clock::time_point lock_end, const std::chrono::steady_clock::time_point task_end)
+{
+  auto& statistics = m_shared_mutex_lock_stats[static_cast<std::size_t>(task)];
+  statistics.calls += 1;
+  statistics.lock_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(lock_end - lock_start).count());
+  statistics.work_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(task_end - lock_end).count());
+}
+
 void aterm_pool::register_thread_aterm_pool(thread_aterm_pool_interface& pool)
 {
+  const auto lock_start = std::chrono::steady_clock::now();
   mcrl2::utilities::lock_guard guard = m_shared_mutex.lock();
+  const auto lock_end = std::chrono::steady_clock::now();
   m_thread_pools.insert(m_thread_pools.end(), &pool);
+  const auto task_end = std::chrono::steady_clock::now();
+  record_shared_mutex_lock(shared_mutex_lock_task::register_thread_pool, lock_start, lock_end, task_end);
 }
 
 void aterm_pool::remove_thread_aterm_pool(thread_aterm_pool_interface& pool)
 {
+  const auto lock_start = std::chrono::steady_clock::now();
   mcrl2::utilities::lock_guard guard = m_shared_mutex.lock();
+  const auto lock_end = std::chrono::steady_clock::now();
   
   auto it = std::find(m_thread_pools.begin(), m_thread_pools.end(), &pool);
   if (it != m_thread_pools.end())
@@ -109,10 +128,44 @@ void aterm_pool::remove_thread_aterm_pool(thread_aterm_pool_interface& pool)
     m_thread_pools.erase(it);  // This only removes the pointer, not the underlying data
                                // structure, which only disappears when the thread is removed. 
   }
+  const auto task_end = std::chrono::steady_clock::now();
+  record_shared_mutex_lock(shared_mutex_lock_task::remove_thread_pool, lock_start, lock_end, task_end);
 }
 
 void aterm_pool::print_performance_statistics() const
 {
+  for (std::size_t task_index = 0; task_index < m_shared_mutex_lock_stats.size(); ++task_index)
+  {
+    const auto& statistics = m_shared_mutex_lock_stats[task_index];
+    if (statistics.calls == 0)
+    {
+      continue;
+    }
+
+    const char* task_name = nullptr;
+    switch (static_cast<shared_mutex_lock_task>(task_index))
+    {
+      case shared_mutex_lock_task::register_thread_pool:
+        task_name = "register_thread_pool";
+        break;
+      case shared_mutex_lock_task::remove_thread_pool:
+        task_name = "remove_thread_pool";
+        break;
+      case shared_mutex_lock_task::collect_impl:
+        task_name = "collect_impl";
+        break;
+      case shared_mutex_lock_task::resize_if_needed:
+        task_name = "resize_if_needed";
+        break;
+      case shared_mutex_lock_task::count:
+        break;
+    }
+
+    mCRL2log(mcrl2::log::info) << "aterm_pool shared mutex lock stats [" << task_name << "]: calls=" << statistics.calls
+      << " lock_seconds=" << static_cast<double>(statistics.lock_nanoseconds) / 1.0e9
+      << " work_seconds=" << static_cast<double>(statistics.work_nanoseconds) / 1.0e9 << '\n';
+  }
+
   m_int_storage.print_performance_stats("integral_storage");
   std::get<0>(m_appl_storage).print_performance_stats("term_storage");
   std::get<1>(m_appl_storage).print_performance_stats("function_application_storage_1");
@@ -200,15 +253,18 @@ void aterm_pool::collect_impl(mcrl2::utilities::shared_mutex& shared_mutex)
       return;
     }
 
+    const auto lock_start = std::chrono::steady_clock::now();
     mcrl2::utilities::lock_guard guard = shared_mutex.try_lock();
     if (!guard.owns_lock())
     { 
       // Another process owns the exclusive lock and is resizing. Wait until resizing is done.
       // The next line generates a shared_guard that automatically is destroyed. No need for an explicit shared_mutex.unlock_shared()
       shared_mutex.lock_shared();
-      // mutex.unlock_shared();
+      const auto lock_end = std::chrono::steady_clock::now();
+      record_shared_mutex_lock(shared_mutex_lock_task::collect_impl, lock_start, lock_end, lock_end);
       return;
-    } 
+    }
+    const auto lock_end = std::chrono::steady_clock::now();
 
     auto timestamp = std::chrono::system_clock::now();
     std::size_t old_size = size();
@@ -270,8 +326,6 @@ void aterm_pool::collect_impl(mcrl2::utilities::shared_mutex& shared_mutex)
     // Garbage collect function symbols.
     m_function_symbol_pool.sweep();
 
-    print_performance_statistics();
-
     // Use some heuristics to determine when the next collect should be called automatically.
     m_count_until_collection = static_cast<long>(size() + protection_set_size());
 
@@ -279,6 +333,8 @@ void aterm_pool::collect_impl(mcrl2::utilities::shared_mutex& shared_mutex)
     {
       m_count_until_collection = 1;
     }
+    const auto task_end = std::chrono::steady_clock::now();
+    record_shared_mutex_lock(shared_mutex_lock_task::collect_impl, lock_start, lock_end, task_end);
   }
 }
 
@@ -397,13 +453,14 @@ bool aterm_pool::resize_is_needed(mcrl2::utilities::shared_mutex& mutex) const
 
 void aterm_pool::resize_if_needed(mcrl2::utilities::shared_mutex& mutex)
 {
+  const auto lock_start = std::chrono::steady_clock::now();
   mcrl2::utilities::lock_guard guard = mutex.try_lock();
+  const auto lock_end = std::chrono::steady_clock::now();
   if (!guard.owns_lock())
   {
     // Another process owns the exclusive lock and is resizing. Wait until resizing is done.
     // The next line generates a shared_guard that automatically is destroyed. No need for an explicit mutex.unlock_shared()
     mutex.lock_shared();
-    // mutex.unlock_shared();
     return;
   } 
 
@@ -436,6 +493,8 @@ void aterm_pool::resize_if_needed(mcrl2::utilities::shared_mutex& mutex)
     mCRL2log(mcrl2::log::info) << "aterm_pool: Resized hash tables from " << old_capacity << " to " << capacity() << " capacity in "
                                << duration << " ms.\n";
   }
+  const auto task_end = std::chrono::steady_clock::now();
+  record_shared_mutex_lock(shared_mutex_lock_task::resize_if_needed, lock_start, lock_end, task_end);
 }
 
 std::size_t aterm_pool::protection_set_size() const

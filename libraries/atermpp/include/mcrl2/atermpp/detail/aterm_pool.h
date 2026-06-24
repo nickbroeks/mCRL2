@@ -14,8 +14,11 @@
 #include "mcrl2/atermpp/detail/function_symbol_pool.h"
 
 #include "mcrl2/utilities/shared_mutex.h"
+#include "mcrl2/utilities/statistics.h"
 
+#include <array>
 #include <atomic>
+#include <chrono>
 
 
 namespace atermpp::detail
@@ -113,7 +116,14 @@ public:
 
   /// \brief Prints various performance statistics for the term pool.
   inline void print_performance_statistics() const;
-
+  enum class shared_mutex_lock_task
+  {
+    register_thread_pool,
+    remove_thread_pool,
+    collect_impl,
+    resize_if_needed,
+    count
+  };
   /// \returns A global term that indicates the empty list.
   aterm& empty_list() noexcept { return reinterpret_cast<aterm&>(m_empty_list); }  // TODO remove this reinterpret cast by letting m_empty_list become an aterm.
 
@@ -152,6 +162,8 @@ private:
   /// \brief Collect garbage on all storages.
   /// \details threadsafe
   inline void collect_impl(mcrl2::utilities::shared_mutex& mutex);
+
+  inline void record_shared_mutex_lock(shared_mutex_lock_task task, std::chrono::steady_clock::time_point lock_start, std::chrono::steady_clock::time_point lock_end, std::chrono::steady_clock::time_point task_end);
 
   /// \brief Creates a integral term with the given value.
   inline bool create_int(aterm& term, std::size_t val);
@@ -228,6 +240,9 @@ private:
 
   /// All the shared mutexes.
   mcrl2::utilities::shared_mutex m_shared_mutex;
+
+  /// Timing statistics for shared-mutex lock acquisition, grouped by task.
+  std::array<mcrl2::utilities::lock_stats, static_cast<std::size_t>(shared_mutex_lock_task::count)> m_shared_mutex_lock_stats{};
 
   /// Represents an empty list.
   aterm_core m_empty_list;
