@@ -52,7 +52,14 @@ static_assert(minimal_hashtable_size>=8);       ///< With a max_load of 0.75 the
 INDEXED_SET_TEMPLATE
 inline void INDEXED_SET::reserve_indices(const std::size_t thread_index)
 {
-  lock_guard guard = m_shared_mutexes[thread_index].lock();
+  lock_guard guard = m_shared_mutexes[thread_index].try_lock();
+  while (!guard.get_is_locked()) {
+    std::this_thread::sleep_for(std::chrono::nanoseconds(50)); //TODO Find a way to notify the mutex being unlocked.
+    if (m_next_index + m_shared_mutexes.size() < m_keys.size()) { // otherwise another process already reserved entries, and nothing needs to be done. 
+      return;
+    }
+    guard.try_lock();
+  }
 
   if (m_next_index + m_shared_mutexes.size() >= m_keys.size())   // otherwise another process already reserved entries, and nothing needs to be done. 
   {
