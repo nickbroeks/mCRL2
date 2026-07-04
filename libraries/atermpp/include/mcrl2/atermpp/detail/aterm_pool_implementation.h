@@ -103,7 +103,7 @@ void aterm_pool::record_shared_mutex_lock(shared_mutex_lock_task task, const std
   auto& statistics = m_shared_mutex_lock_stats[static_cast<std::size_t>(task)];
   statistics.calls += 1;
   statistics.lock_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(lock_end - lock_start).count());
-  statistics.work_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(lock_end - lock_start).count());
+  statistics.work_nanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(task_end - lock_end).count());
 }
 
 void aterm_pool::register_thread_aterm_pool(thread_aterm_pool_interface& pool)
