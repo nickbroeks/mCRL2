@@ -369,6 +369,7 @@ namespace mcrl2::lps
       mCRL2log(log::verbose) << mcrl2::utilities::format_three_field_stats("  -  revive", m_revive_stats);
       discovered.print_stats();
       discovered.print_put_in_hashtable_statistics();
+      atermpp::detail::g_aterm_pool_instance().print_performance_statistics();
 
       m_must_abort = false;
     }
