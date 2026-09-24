@@ -66,8 +66,11 @@ namespace mcrl2::lps
           
         if (!todo->empty())
         {
-          todo->choose_element(current_state);
-          thread_todo->insert(current_state);
+          std::size_t pick_count = std::min(todo->size(), size_t{32});
+          for (std::size_t i = 0; i < pick_count; ++i) {
+            todo->choose_element(current_state);
+            thread_todo->insert(current_state);
+          } 
           if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
           {
             m_exclusive_state_access.unlock();
@@ -168,9 +171,9 @@ namespace mcrl2::lps
             // It would be nice if we could find an optimal redistribution strategy of the 
             // states in the todo buffers, minimizing the number of times a mutex has to be 
             // obtained. 
-            if (number_of_active_processes<m_options.number_of_threads && thread_todo->size()>100)
+            if (thread_todo->size() > 20 && thread_todo->size() > todo->size())
             {
-              if (todo->size()==0)
+              if (todo->size() < m_options.number_of_threads * 32)
               {
                 if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
                 {
@@ -178,7 +181,7 @@ namespace mcrl2::lps
                 }
 
                 // move 25% of the states of this thread to the global todo buffer.
-                std::size_t number_of_states_to_move=std::min(thread_todo->size()-1,1+(thread_todo->size()/4));
+                std::size_t number_of_states_to_move=std::min(m_options.number_of_threads * 32, thread_todo->size()/4);
                 for(std::size_t i=0; i<number_of_states_to_move; ++i)  
                 {
                   thread_todo->choose_element(current_state);
