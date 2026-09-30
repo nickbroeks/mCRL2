@@ -24,10 +24,10 @@ namespace mcrl2::lps
       std::unique_ptr<todo_set>& thread_todo,
       std::atomic<std::size_t>& number_of_active_processes)
     {
-      std::unique_lock<std::mutex> lock;
+      std::unique_lock lock(m_exclusive_state_access, std::defer_lock);
       if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
       {
-        lock = std::unique_lock(m_exclusive_state_access);
+        lock.lock();
       }
       wait_for_global(todo, number_of_active_processes, lock);
       if (!todo->empty())
@@ -86,11 +86,10 @@ namespace mcrl2::lps
       {
         return;
       }
-
-      std::unique_lock<std::mutex> lock;
+      std::unique_lock lock(m_exclusive_state_access, std::defer_lock);
       if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
       {
-        lock = std::unique_lock(m_exclusive_state_access);
+        lock.lock();
       }
       if (todo->empty())
       {
@@ -250,10 +249,10 @@ namespace mcrl2::lps
         }
       }
       {
-        std::unique_lock<std::mutex> lock;
+        std::unique_lock lock(m_exclusive_state_access, std::defer_lock);
         if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
         {
-          lock = std::unique_lock(m_exclusive_state_access);
+          lock.lock();
         }
         mCRL2log(log::log_level_t::debug) << "Stop thread " << thread_index << ".\n";
       }
