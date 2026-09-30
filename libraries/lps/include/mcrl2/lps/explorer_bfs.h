@@ -54,152 +54,143 @@ namespace mcrl2::lps
       std::vector<state> dummy;
       std::unique_ptr<todo_set> thread_todo=make_todo_set(dummy.begin(),dummy.end()); // The new states for each process are temporarily stored in this vector for each thread. 
       atermpp::aterm key;
-
-      if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
-      {
-        m_exclusive_state_access.lock();
-      }
       
       while (!m_must_abort.load(std::memory_order_relaxed)) 
       {
         assert(m_must_abort || thread_todo->empty());
-          
+        if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
+        {
+          m_exclusive_state_access.lock();
+        }
         if (!todo->empty())
         {
           todo->choose_element(current_state);
           thread_todo->insert(current_state);
-          if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
+        }
+        if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
+        {
+          m_exclusive_state_access.unlock();
+        }
+
+        while (!thread_todo->empty() && !m_must_abort.load(std::memory_order_relaxed))
+        {
+          thread_todo->choose_element(current_state);
+          std::size_t s_index = discovered.index(current_state,thread_index);
+          start_state(thread_index, current_state, s_index);
+          data::add_assignments(thread_sigma, m_process_parameters, current_state);
+#ifdef MCRL2_USE_CONTROL_FLOW
+          auto active_cfg_vertices = compute_active_cfg_vertices_if_enabled(thread_sigma);
+#endif
+          for (const explorer_summand& summand: regular_summands)
           {
-            m_exclusive_state_access.unlock();
-          }
-
-          while (!thread_todo->empty() && !m_must_abort.load(std::memory_order_relaxed))
-          { 
-            thread_todo->choose_element(current_state);
-            std::size_t s_index = discovered.index(current_state,thread_index);
-            start_state(thread_index, current_state, s_index);
-            data::add_assignments(thread_sigma, m_process_parameters, current_state);
+            generate_transitions(
+              summand,
+              confluent_summands,
+              thread_sigma,
+              thread_rewr,
+              condition,
+              state_,
+              key,
+              thread_enumerator,
+              thread_id_generator,
 #ifdef MCRL2_USE_CONTROL_FLOW
-            auto active_cfg_vertices = compute_active_cfg_vertices_if_enabled(thread_sigma);
+              active_cfg_vertices,
 #endif
-            for (const explorer_summand& summand: regular_summands)
-            {   
-              generate_transitions(
-                summand,
-                confluent_summands,
-                thread_sigma,
-                thread_rewr,
-                condition,
-                state_,
-                key,
-                thread_enumerator,
-                thread_id_generator,
-#ifdef MCRL2_USE_CONTROL_FLOW
-                active_cfg_vertices,
-#endif
-                [&](const lps::multi_action& a, const state_type& s1)
+              [&](const lps::multi_action& a, const state_type& s1)
+              {
+                if constexpr (Timed)
                 {
-                  if constexpr (Timed)
-                  { 
-                    const data::data_expression& t = current_state[m_n];
-                    if (a.has_time() && less_equal(a.time(), t, thread_sigma, thread_rewr))
-                    {
-                      return;
-                    }
-                  } 
-                  if constexpr (Stochastic)
-                  { 
-                    std::list<std::size_t> s1_index;
-                    const auto& S1 = s1.states;
-                    // TODO: join duplicate targets
-                    for (const state& s1_: S1)
-                    { 
-                      std::size_t k = discovered.index(s1_,thread_index);
-                      if (k >= discovered.size())
-                      { 
-                        thread_todo->insert(s1_);
-                        k = discovered.insert(s1_, thread_index).first;
-                        discover_state(thread_index, s1_, k);
-                      }
-                      s1_index.push_back(k);
-                    }
-
-                    examine_transition(thread_index, m_options.number_of_threads, current_state, s_index, a, s1, s1_index, summand.index);
-                  } 
-                  else 
-                  { 
-                    std::size_t s1_index; 
-                    if constexpr (Timed)
-                    { 
-                      s1_index = discovered.index(s1,thread_index);
-                      if (s1_index >= discovered.size())
-                      {   
-                        const data::data_expression& t = current_state[m_n];
-                        const data::data_expression& t1 = a.has_time() ? a.time() : t;
-                        make_timed_state(state_, s1, t1);
-                        s1_index = discovered.insert(state_, thread_index).first;
-                        discover_state(thread_index, state_, s1_index);
-                        thread_todo->insert(state_);
-                      } 
-                    }
-                    else
-                    { 
-                      std::pair<std::size_t,bool> p = discovered.insert(s1, thread_index);
-                      s1_index=p.first;
-                      if (p.second)  // Index is newly added. 
-                      {
-                        discover_state(thread_index, s1, s1_index);
-                        thread_todo->insert(s1); 
-                      }
-                    }
-
-                    examine_transition(thread_index, m_options.number_of_threads, current_state, s_index, a, s1, s1_index, summand.index);
+                  const data::data_expression& t = current_state[m_n];
+                  if (a.has_time() && less_equal(a.time(), t, thread_sigma, thread_rewr))
+                  {
+                    return;
                   }
                 }
-              );
-            }
+                if constexpr (Stochastic)
+                {
+                  std::list<std::size_t> s1_index;
+                  const auto& S1 = s1.states;
+                  // TODO: join duplicate targets
+                  for (const state& s1_: S1)
+                  {
+                    std::size_t k = discovered.index(s1_,thread_index);
+                    if (k >= discovered.size())
+                    {
+                      thread_todo->insert(s1_);
+                      k = discovered.insert(s1_, thread_index).first;
+                      discover_state(thread_index, s1_, k);
+                    }
+                    s1_index.push_back(k);
+                  }
 
-            finish_state(thread_index, m_options.number_of_threads, current_state, s_index, thread_todo->size());
-            thread_todo->finish_state();
+                  examine_transition(thread_index, m_options.number_of_threads, current_state, s_index, a, s1, s1_index, summand.index);
+                }
+                else
+                {
+                  std::size_t s1_index;
+                  if constexpr (Timed)
+                  {
+                    s1_index = discovered.index(s1,thread_index);
+                    if (s1_index >= discovered.size())
+                    {
+                      const data::data_expression& t = current_state[m_n];
+                      const data::data_expression& t1 = a.has_time() ? a.time() : t;
+                      make_timed_state(state_, s1, t1);
+                      s1_index = discovered.insert(state_, thread_index).first;
+                      discover_state(thread_index, state_, s1_index);
+                      thread_todo->insert(state_);
+                    }
+                  }
+                  else
+                  {
+                    std::pair<std::size_t,bool> p = discovered.insert(s1, thread_index);
+                    s1_index=p.first;
+                    if (p.second)  // Index is newly added.
+                    {
+                      discover_state(thread_index, s1, s1_index);
+                      thread_todo->insert(s1);
+                    }
+                  }
 
-            // TODO: The constant 100 below is quite arbitrary, and could be chosen more wisely.
-            // If it is too low, then m_exclusive_state_access.lock(); becomes dominant, whereas 
-            // few states that a local process owns are redistributed, which is not wise. 
-            // It would be nice if we could find an optimal redistribution strategy of the 
-            // states in the todo buffers, minimizing the number of times a mutex has to be 
-            // obtained. 
-            if (number_of_active_processes<m_options.number_of_threads && thread_todo->size()>100)
+                  examine_transition(thread_index, m_options.number_of_threads, current_state, s_index, a, s1, s1_index, summand.index);
+                }
+              }
+            );
+          }
+
+          finish_state(thread_index, m_options.number_of_threads, current_state, s_index, thread_todo->size());
+          thread_todo->finish_state();
+
+          // TODO: The constant 100 below is quite arbitrary, and could be chosen more wisely.
+          // If it is too low, then m_exclusive_state_access.lock(); becomes dominant, whereas
+          // few states that a local process owns are redistributed, which is not wise.
+          // It would be nice if we could find an optimal redistribution strategy of the
+          // states in the todo buffers, minimizing the number of times a mutex has to be
+          // obtained.
+          if (number_of_active_processes<m_options.number_of_threads && thread_todo->size()>100)
+          {
+            if (todo->size()==0)
             {
-              if (todo->size()==0)
+              if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
               {
-                if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
-                {
-                  m_exclusive_state_access.lock();
-                }
-
-                // move 25% of the states of this thread to the global todo buffer.
-                std::size_t number_of_states_to_move=std::min(thread_todo->size()-1,1+(thread_todo->size()/4));
-                for(std::size_t i=0; i<number_of_states_to_move; ++i)  
-                {
-                  thread_todo->choose_element(current_state);
-                  todo->insert(current_state);
-                }
-                if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
-                {
-                  m_exclusive_state_access.unlock();
-                }
-                std::scoped_lock lock(m_global_todo_buffer_mutex);
-                m_signal_global_todo_buffer_filled.notify_all();
+                m_exclusive_state_access.lock();
               }
 
+              // move 25% of the states of this thread to the global todo buffer.
+              std::size_t number_of_states_to_move=std::min(thread_todo->size()-1,1+(thread_todo->size()/4));
+              for(std::size_t i=0; i<number_of_states_to_move; ++i)
+              {
+                thread_todo->choose_element(current_state);
+                todo->insert(current_state);
+              }
+              if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
+              {
+                m_exclusive_state_access.unlock();
+              }
+              std::scoped_lock lock(m_global_todo_buffer_mutex);
+              m_signal_global_todo_buffer_filled.notify_all();
             }
-          }
-        }
-        else
-        {
-          if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
-          {
-            m_exclusive_state_access.unlock();
+
           }
         }
         // Check whether all processes are ready. If so the number_of_active_processes becomes 0. 
@@ -225,11 +216,11 @@ namespace mcrl2::lps
             }
           }
         }
-        if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
-        {
-          m_exclusive_state_access.lock();
-        }
-      } 
+      }
+      if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
+      {
+        m_exclusive_state_access.lock();
+      }
       mCRL2log(log::log_level_t::debug) << "Stop thread " << thread_index << ".\n";
       if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
       {
