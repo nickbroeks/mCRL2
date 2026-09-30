@@ -80,8 +80,6 @@ class explorer: public abortable
     Specification m_global_lpsspec;
     // Mutexes
     std::mutex m_exclusive_state_access;
-    // Mutex locked if a process finds the global buffer empty, and unlocked if it is (attempted to be) refilled
-    std::mutex m_global_todo_buffer_mutex;
     std::condition_variable m_signal_global_todo_buffer_filled;
 
     std::vector<data::variable> m_process_parameters;

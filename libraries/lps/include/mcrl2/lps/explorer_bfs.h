@@ -58,18 +58,32 @@ namespace mcrl2::lps
       while (!m_must_abort.load(std::memory_order_relaxed)) 
       {
         assert(m_must_abort || thread_todo->empty());
-        if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
-        {
-          m_exclusive_state_access.lock();
-        }
-        if (!todo->empty())
-        {
-          todo->choose_element(current_state);
-          thread_todo->insert(current_state);
-        }
-        if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
-        {
-          m_exclusive_state_access.unlock();
+
+        { // Scope the lock for taking tasks from the global todo list.
+          std::unique_lock<std::mutex> lock;
+          if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
+          {
+            lock = std::unique_lock(m_exclusive_state_access);
+          }
+          if (todo->empty())
+          {
+            if (1==number_of_active_processes.fetch_sub(1))
+            {
+              m_must_abort=true;
+              m_signal_global_todo_buffer_filled.notify_all();
+              break;
+            }
+            m_signal_global_todo_buffer_filled.wait(lock, [&]
+            {
+              return !todo->empty() || m_must_abort.load(std::memory_order_relaxed);
+            });
+            ++number_of_active_processes;
+          }
+          if (!todo->empty())
+          {
+            todo->choose_element(current_state);
+            thread_todo->insert(current_state);
+          }
         }
 
         while (!thread_todo->empty() && !m_must_abort.load(std::memory_order_relaxed))
@@ -171,9 +185,10 @@ namespace mcrl2::lps
           {
             if (todo->size()==0)
             {
+              std::unique_lock<std::mutex> lock;
               if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
               {
-                m_exclusive_state_access.lock();
+                lock = std::unique_lock(m_exclusive_state_access);
               }
 
               // move 25% of the states of this thread to the global todo buffer.
@@ -183,50 +198,19 @@ namespace mcrl2::lps
                 thread_todo->choose_element(current_state);
                 todo->insert(current_state);
               }
-              if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
-              {
-                m_exclusive_state_access.unlock();
-              }
-              std::scoped_lock lock(m_global_todo_buffer_mutex);
               m_signal_global_todo_buffer_filled.notify_all();
             }
-
           }
         }
-        // Check whether all processes are ready. If so the number_of_active_processes becomes 0. 
-        // Otherwise, this thread becomes active again, and tries to see whether the todo buffer is
-        // not empty, to take up more work. 
-
-        assert(thread_todo->empty() || m_must_abort);
-        if (todo->empty())
+      }
+      {
+        std::unique_lock<std::mutex> lock;
+        if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
         {
-          std::unique_lock<std::mutex> lock(m_global_todo_buffer_mutex);  
-          // Atomic decrement and compare is essential) 
-          if (1==number_of_active_processes.fetch_sub(1))
-          {
-            m_must_abort=true;
-            m_signal_global_todo_buffer_filled.notify_all(); 
-          }
-          else
-          {
-            m_signal_global_todo_buffer_filled.wait(lock); 
-            if (!m_must_abort) 
-            {
-              number_of_active_processes++;   
-            }
-          }
+          lock = std::unique_lock(m_exclusive_state_access);
         }
+        mCRL2log(log::log_level_t::debug) << "Stop thread " << thread_index << ".\n";
       }
-      if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
-      {
-        m_exclusive_state_access.lock();
-      }
-      mCRL2log(log::log_level_t::debug) << "Stop thread " << thread_index << ".\n";
-      if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
-      {
-        m_exclusive_state_access.unlock();
-      }
-
     }  // end generate_state_space_thread.
 
     template <bool Stochastic, bool Timed, typename Specification>
