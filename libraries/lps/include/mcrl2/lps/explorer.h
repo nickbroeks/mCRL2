@@ -121,6 +121,20 @@ class explorer: public abortable
     }
 #endif
 
+    void try_take_from_global(
+      std::unique_ptr<todo_set>& todo,
+      std::unique_ptr<todo_set>& thread_todo,
+      std::atomic<std::size_t>& number_of_active_processes);
+
+    void wait_for_global(
+      std::unique_ptr<todo_set>& todo,
+      std::atomic<std::size_t>& number_of_active_processes,
+      std::unique_lock<std::mutex>& lock);
+
+    void take_from_global(
+      std::unique_ptr<todo_set>& todo,
+      std::unique_ptr<todo_set>& thread_todo);
+
     Specification preprocess(const Specification& lpsspec)
     {
       Specification result = lpsspec;

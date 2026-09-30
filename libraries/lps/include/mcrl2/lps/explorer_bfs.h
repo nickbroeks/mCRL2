@@ -19,6 +19,58 @@
 namespace mcrl2::lps
 {
     template <bool Stochastic, bool Timed, typename Specification>
+    void explorer<Stochastic, Timed, Specification>::try_take_from_global(
+      std::unique_ptr<todo_set>& todo,
+      std::unique_ptr<todo_set>& thread_todo,
+      std::atomic<std::size_t>& number_of_active_processes)
+    {
+      std::unique_lock<std::mutex> lock;
+      if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
+      {
+        lock = std::unique_lock(m_exclusive_state_access);
+      }
+      wait_for_global(todo, number_of_active_processes, lock);
+      if (!todo->empty())
+      {
+        take_from_global(todo, thread_todo);
+      }
+    }
+
+    template <bool Stochastic, bool Timed, typename Specification>
+    void explorer<Stochastic, Timed, Specification>::wait_for_global(
+      std::unique_ptr<todo_set>& todo,
+      std::atomic<std::size_t>& number_of_active_processes,
+      std::unique_lock<std::mutex>& lock)
+    {
+      if (!todo->empty())
+      {
+        return;
+      }
+      if (1 == number_of_active_processes.fetch_sub(1))
+      {
+        m_must_abort = true;
+        m_signal_global_todo_buffer_filled.notify_all();
+        return;
+      }
+      m_signal_global_todo_buffer_filled.wait(lock, [&]
+      {
+        return !todo->empty() || m_must_abort.load(std::memory_order_relaxed);
+      });
+      ++number_of_active_processes;
+      return;
+    }
+
+    template <bool Stochastic, bool Timed, typename Specification>
+    void explorer<Stochastic, Timed, Specification>::take_from_global(
+      std::unique_ptr<todo_set>& todo,
+      std::unique_ptr<todo_set>& thread_todo)
+    {
+      state current_state;
+      todo->choose_element(current_state);
+      thread_todo->insert(current_state);
+    }
+
+    template <bool Stochastic, bool Timed, typename Specification>
     template <
       typename StateType,
       typename SummandSequence,
@@ -59,32 +111,7 @@ namespace mcrl2::lps
       {
         assert(m_must_abort || thread_todo->empty());
 
-        { // Scope the lock for taking tasks from the global todo list.
-          std::unique_lock<std::mutex> lock;
-          if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
-          {
-            lock = std::unique_lock(m_exclusive_state_access);
-          }
-          if (todo->empty())
-          {
-            if (1==number_of_active_processes.fetch_sub(1))
-            {
-              m_must_abort=true;
-              m_signal_global_todo_buffer_filled.notify_all();
-              break;
-            }
-            m_signal_global_todo_buffer_filled.wait(lock, [&]
-            {
-              return !todo->empty() || m_must_abort.load(std::memory_order_relaxed);
-            });
-            ++number_of_active_processes;
-          }
-          if (!todo->empty())
-          {
-            todo->choose_element(current_state);
-            thread_todo->insert(current_state);
-          }
-        }
+        try_take_from_global(todo, thread_todo, number_of_active_processes);
 
         while (!thread_todo->empty() && !m_must_abort.load(std::memory_order_relaxed))
         {
