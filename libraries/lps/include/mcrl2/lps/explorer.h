@@ -135,6 +135,15 @@ class explorer: public abortable
       std::unique_ptr<todo_set>& todo,
       std::unique_ptr<todo_set>& thread_todo);
 
+    void try_share_to_global(
+      std::unique_ptr<todo_set>& todo,
+      std::unique_ptr<todo_set>& thread_todo,
+      std::atomic<std::size_t>& number_of_active_processes);
+
+    void share_to_global(
+      std::unique_ptr<todo_set>& todo,
+      std::unique_ptr<todo_set>& thread_todo);
+
     Specification preprocess(const Specification& lpsspec)
     {
       Specification result = lpsspec;

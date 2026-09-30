@@ -71,6 +71,50 @@ namespace mcrl2::lps
     }
 
     template <bool Stochastic, bool Timed, typename Specification>
+    void explorer<Stochastic, Timed, Specification>::try_share_to_global(
+      std::unique_ptr<todo_set>& todo,
+      std::unique_ptr<todo_set>& thread_todo,
+      std::atomic<std::size_t>& number_of_active_processes)
+    {
+      // TODO: The constant 100 below is quite arbitrary, and could be chosen more wisely.
+      // If it is too low, then m_exclusive_state_access.lock(); becomes dominant, whereas
+      // few states that a local process owns are redistributed, which is not wise.
+      // It would be nice if we could find an optimal redistribution strategy of the
+      // states in the todo buffers, minimizing the number of times a mutex has to be
+      // obtained.
+      if (number_of_active_processes >= m_options.number_of_threads || thread_todo->size() <= 100)
+      {
+        return;
+      }
+
+      std::unique_lock<std::mutex> lock;
+      if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
+      {
+        lock = std::unique_lock(m_exclusive_state_access);
+      }
+      if (todo->empty())
+      {
+        share_to_global(todo, thread_todo);
+      }
+    }
+
+    template <bool Stochastic, bool Timed, typename Specification>
+    void explorer<Stochastic, Timed, Specification>::share_to_global(
+      std::unique_ptr<todo_set>& todo,
+      std::unique_ptr<todo_set>& thread_todo)
+    {
+      state current_state;
+      // Move 25% of the states of this thread to the global todo buffer.
+      const std::size_t number_of_states_to_move = std::min(thread_todo->size() - 1, 1 + (thread_todo->size() / 4));
+      for (std::size_t i = 0; i < number_of_states_to_move; ++i)
+      {
+        thread_todo->choose_element(current_state);
+        todo->insert(current_state);
+      }
+      m_signal_global_todo_buffer_filled.notify_all();
+    }
+
+    template <bool Stochastic, bool Timed, typename Specification>
     template <
       typename StateType,
       typename SummandSequence,
@@ -202,32 +246,7 @@ namespace mcrl2::lps
           finish_state(thread_index, m_options.number_of_threads, current_state, s_index, thread_todo->size());
           thread_todo->finish_state();
 
-          // TODO: The constant 100 below is quite arbitrary, and could be chosen more wisely.
-          // If it is too low, then m_exclusive_state_access.lock(); becomes dominant, whereas
-          // few states that a local process owns are redistributed, which is not wise.
-          // It would be nice if we could find an optimal redistribution strategy of the
-          // states in the todo buffers, minimizing the number of times a mutex has to be
-          // obtained.
-          if (number_of_active_processes<m_options.number_of_threads && thread_todo->size()>100)
-          {
-            if (todo->size()==0)
-            {
-              std::unique_lock<std::mutex> lock;
-              if (mcrl2::utilities::detail::GlobalThreadSafe && m_options.number_of_threads > 1)
-              {
-                lock = std::unique_lock(m_exclusive_state_access);
-              }
-
-              // move 25% of the states of this thread to the global todo buffer.
-              std::size_t number_of_states_to_move=std::min(thread_todo->size()-1,1+(thread_todo->size()/4));
-              for(std::size_t i=0; i<number_of_states_to_move; ++i)
-              {
-                thread_todo->choose_element(current_state);
-                todo->insert(current_state);
-              }
-              m_signal_global_todo_buffer_filled.notify_all();
-            }
-          }
+          try_share_to_global(todo, thread_todo, number_of_active_processes);
         }
       }
       {
